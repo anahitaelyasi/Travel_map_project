@@ -1,1 +1,1 @@
-# Travel_map_project
+Copyright (c) 2026 [Anahita Elyasi]. All rights reserved.
