@@ -1,0 +1,2698 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>نقشه هوشمند ایران - Iran Map App</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+    <style>
+        #map { position: absolute; inset: 0; z-index: 1; }
+        #map.picking, #map.picking .leaflet-grab, #map.picking .leaflet-interactive { cursor: crosshair !important; }
+        .suggest-box {
+            position: absolute; top: 100%; right: 0; left: 0; margin-top: 6px;
+            background: white; border: 1px solid #e5e7eb; border-radius: 14px;
+            box-shadow: 0 10px 25px rgba(0,0,0,.15); z-index: 5000;
+            max-height: 340px; overflow-y: auto; display: none;
+        }
+        .suggest-item {
+            padding: 9px 12px; font-size: 13px; cursor: pointer;
+            display: flex; gap: 10px; align-items: flex-start; border-bottom: 1px solid #f3f4f6;
+        }
+        .suggest-item:last-child { border-bottom: none; }
+        .suggest-item:hover { background: #eff6ff; }
+        .suggest-item i { margin-top: 3px; color: #6b7280; width: 14px; text-align: center; }
+        .suggest-item .sub { font-size: 11px; color: #6b7280; margin-top: 2px; }
+        .pin { background: transparent; border: none; }
+        .zoom-btn {
+            width: 40px; height: 40px; background: white; border: none; font-size: 16px; color: #374151;
+            cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background .2s;
+        }
+        .zoom-btn:hover { background: #f3f4f6; }
+        .leaflet-popup-content { font-family: inherit; direction: rtl; }
+        
+        .slim-scroll::-webkit-scrollbar { width: 5px; height: 5px; }
+        .slim-scroll::-webkit-scrollbar-track { background: transparent; }
+        .slim-scroll::-webkit-scrollbar-thumb { background-color: #cbd5e1; border-radius: 10px; }
+        .slim-scroll::-webkit-scrollbar-thumb:hover { background-color: #94a3b8; }
+        
+        .hide-scroll::-webkit-scrollbar { display: none; }
+        .hide-scroll { -ms-overflow-style: none; scrollbar-width: none; }
+        
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    </style>
+</head>
+<body class="h-screen overflow-hidden font-sans bg-gray-100">
+
+    <div id="toast-container" class="fixed top-16 left-1/2 -translate-x-1/2 z-[10000] flex flex-col gap-2 pointer-events-none"></div>
+
+    <!-- MAP (full screen) -->
+    <div id="map"></div>
+
+    <!-- RIGHT RAIL -->
+    <nav class="fixed top-0 right-0 bottom-0 w-16 bg-white z-40 border-l border-gray-200 shadow flex flex-col items-center py-4 gap-5">
+        <button id="nav-btn-map" onclick="toggleMainMenu()" class="flex flex-col items-center gap-1 text-gray-600 hover:text-blue-600 transition" title="نقشه‌من">
+            <i class="fa-solid fa-map-location-dot text-xl"></i><span class="text-[10px]">نقشه</span>
+        </button>
+        
+        <div id="header-auth-section"></div>
+        
+        <button id="nav-btn-hamsafar" onclick="openHamsafarPanel()" class="flex flex-col items-center gap-1 text-gray-600 hover:text-blue-600 transition" title="همسفر">
+            <i class="fa-solid fa-user-group text-xl"></i><span class="text-[10px]">همسفر</span>
+        </button>
+
+        <button id="nav-btn-groups" onclick="openPermGroupsPanel()" class="flex flex-col items-center gap-1 text-gray-600 hover:text-purple-600" title="گروه‌ها">
+            <i class="fa-solid fa-comments text-xl"></i><span class="text-[10px]">گروه‌ها</span>
+        </button>
+    </nav>
+
+    <!-- MAIN MENU PANEL -->
+    <!-- UPGRADED: Added absolute top-16 to sit below the search bar like in the image -->
+    <aside id="main-menu-panel" class="hidden fixed top-0 bottom-0 right-16 w-[320px] max-w-[calc(100vw-4rem)] bg-white z-40 shadow-2xl overflow-y-auto slim-scroll border-l border-gray-200 flex-col">
+        <!-- UPGRADED: Cleaned header to match screenshot 2 style -->
+        <div class="flex items-center justify-between p-4 border-b border-gray-100 shadow-sm shrink-0 bg-white">
+            <div class="flex items-center gap-2 text-blue-600 font-bold">
+                <i class="fa-solid fa-map-location-dot text-xl"></i>
+                <span>نقشه من</span>
+            </div>
+            <button onclick="closeMainMenu()" class="text-gray-500 hover:text-gray-900 p-1 transition"><i class="fa-solid fa-xmark text-lg"></i></button>
+        </div>
+        
+        <div class="flex-1 py-2">
+            <button onclick="enableAddStationMode(); closeMainMenu();" class="w-full flex items-center gap-3 px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 transition text-right font-medium">
+                <i class="fa-solid fa-location-crosshairs text-gray-400 w-5 text-center text-lg"></i>
+                افزودن مکانی که در نقشه نیست
+            </button>
+            <button onclick="showSavedPlacesView(); closeMainMenu();" class="w-full flex items-center gap-3 px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 transition text-right">
+                <i class="fa-regular fa-star text-gray-400 w-5 text-center text-lg"></i>
+                مکان‌های شخصی
+            </button>
+            <div class="w-full flex items-center justify-between px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 transition text-right cursor-pointer">
+                <div class="flex items-center gap-3">
+                    <i class="fa-solid fa-traffic-light text-gray-400 w-5 text-center text-lg"></i>
+                    ترافیک معابر
+                </div>
+                <label class="relative inline-flex items-center cursor-pointer">
+                  <input type="checkbox" class="sr-only peer" checked>
+                  <div class="w-7 h-4 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-blue-600"></div>
+                </label>
+            </div>
+            
+            <div class="border-t border-gray-100 my-2"></div>
+            
+            <button class="w-full flex items-center gap-3 px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 transition text-right">فاصله‌شهرها</button>
+            <button class="w-full flex items-center gap-3 px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 transition text-right">قابلیت‌ها</button>
+            <button class="w-full flex items-center gap-3 px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 transition text-right">شرایط استفاده</button>
+        </div>
+    </aside>
+
+    <!-- SINGLE SEARCH BAR -->
+    <!-- z-30 keeps the search bar below every side panel (they are z-40/z-50), so any open panel covers it -->
+    <div id="search-wrap" class="fixed top-4 right-[5rem] z-30">
+        <div class="relative w-[460px] max-w-[calc(100vw-6rem)]">
+            <div class="bg-white rounded-full shadow-lg flex items-center px-2 h-12 gap-1">
+                <input id="search-input" type="text" autocomplete="off" placeholder="جستجو" class="flex-1 bg-transparent outline-none text-sm px-3 min-w-0">
+                <button id="search-clear" onclick="clearSearch()" class="hidden text-gray-400 hover:text-gray-700 px-1" title="پاک کردن"><i class="fa-solid fa-xmark"></i></button>
+                <i class="fa-solid fa-magnifying-glass text-gray-700 mx-1"></i>
+                <button onclick="openDirections()" class="w-9 h-9 rounded-full bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center shrink-0" title="مسیریابی">
+                    <i class="fa-solid fa-diamond-turn-right"></i>
+                </button>
+            </div>
+            <div id="suggest-search" class="suggest-box"></div>
+        </div>
+    </div>
+
+    <!-- PROFILE PANEL -->
+    <aside id="profile-panel" class="hidden fixed top-0 bottom-0 right-16 w-[400px] max-w-[calc(100vw-4rem)] bg-white z-40 shadow-2xl overflow-y-auto slim-scroll border-l border-gray-200">
+        <div class="bg-gradient-to-bl from-cyan-50 via-blue-50 to-white p-4 pb-6 rounded-bl-[3rem]">
+            <div class="flex items-center justify-between mb-6 w-full">
+                <button onclick="closeProfilePanel()" class="text-gray-700 hover:text-gray-900 transition p-1.5 rounded-full hover:bg-black/5" title="بازگشت">
+                    <i class="fa-solid fa-arrow-right text-lg"></i>
+                </button>
+                <div class="flex items-center gap-1">
+                    <button onclick="showToast('لینک پروفایل کپی شد!', 'success')" class="text-gray-700 hover:text-gray-900 transition p-1.5 rounded-full hover:bg-black/5" title="کپی لینک پروفایل">
+                        <i class="fa-solid fa-share-nodes text-lg"></i>
+                    </button>
+                    <button onclick="toggleProfileMenu(event)" class="text-gray-700 hover:text-gray-900 transition p-1.5 rounded-full hover:bg-black/5" title="گزینه‌ها">
+                        <i class="fa-solid fa-ellipsis-vertical text-lg"></i>
+                    </button>
+                </div>
+            </div>
+            
+            <div class="flex flex-col items-center">
+                <div class="w-24 h-24 rounded-full bg-gray-200 border-4 border-white shadow-md overflow-hidden mb-3">
+                    <img id="profile-panel-avatar" src="" class="w-full h-full object-cover">
+                </div>
+                <h2 class="text-base font-bold text-gray-800" id="profile-panel-name">کاربر نشان</h2>
+            </div>
+            
+            <div class="bg-white rounded-2xl shadow-sm border border-gray-100 flex justify-center py-3 mt-5 mx-4">
+                <div class="text-center border-l border-gray-100 px-10">
+                    <div class="text-[11px] text-gray-500 mb-1">مشارکت</div>
+                    <div class="font-bold text-gray-800 text-sm">۰ <span class="text-[10px] font-normal text-gray-400">امتیاز</span></div>
+                </div>
+                <div class="text-center px-10">
+                    <div class="text-[11px] text-gray-500 mb-1">رتبه</div>
+                    <div class="font-bold text-gray-800 text-sm">+۱۰۰,۰۰۰</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="flex justify-around border-b border-gray-200 px-4 mt-2">
+            <button class="profile-tab-btn pb-2.5 text-sm font-bold text-blue-600 border-b-2 border-blue-600" data-tab="photos" onclick="switchProfileTab('photos', this)">عکس‌ها</button>
+            <button class="profile-tab-btn pb-2.5 text-sm font-medium text-gray-500 hover:text-gray-800 transition" data-tab="comments" onclick="switchProfileTab('comments', this)">نظرات</button>
+            <button class="profile-tab-btn pb-2.5 text-sm font-medium text-gray-500 hover:text-gray-800 transition" data-tab="contributions" onclick="switchProfileTab('contributions', this)">مشارکت</button>
+            <button class="profile-tab-btn pb-2.5 text-sm font-medium text-gray-500 hover:text-gray-800 transition" data-tab="medals" onclick="switchProfileTab('medals', this)">مدال‌ها</button>
+        </div>
+
+        <div class="p-6">
+            <div id="tab-content-photos" class="profile-tab-content flex flex-col items-center justify-center py-8 text-center">
+                <div class="w-24 h-24 mx-auto mb-4 border-2 border-dashed border-blue-200 rounded-[1.5rem] flex items-center justify-center text-blue-300 bg-blue-50/50">
+                    <i class="fa-regular fa-image text-4xl"></i>
+                </div>
+                <h3 class="font-bold text-gray-800 mb-1.5 text-sm">اولین عکست رو اضافه کن</h3>
+                <p class="text-xs text-gray-500 mb-5">این صفحه هنوز خالیه</p>
+                <button class="border border-gray-300 hover:bg-gray-50 text-gray-700 rounded-full px-5 py-2 text-xs flex items-center justify-center gap-2 mx-auto transition shadow-sm font-medium">
+                    <i class="fa-solid fa-camera"></i> افزودن عکس به مکان
+                </button>
+            </div>
+        </div>
+
+        <div id="profile-menu" class="hidden absolute top-12 left-4 bg-white rounded-xl shadow-xl border border-gray-100 w-48 z-50 py-1.5">
+            <button class="w-full text-right px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2" onclick="openEditProfilePanel()">
+                <i class="fa-solid fa-pen text-gray-400 w-4 text-xs"></i> ویرایش پروفایل
+            </button>
+            <button class="w-full text-right px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2" onclick="openConfirmModal('خروج از حساب', 'آیا از خروج از حساب کاربری اطمینان دارید؟', 'fa-right-from-bracket', 'خروج', confirmLogout)">
+                <i class="fa-solid fa-right-from-bracket text-gray-400 w-4 text-xs"></i> خروج از حساب کاربری
+            </button>
+        </div>
+    </aside>
+
+    <!-- EDIT PROFILE PANEL -->
+    <aside id="edit-profile-panel" class="hidden fixed top-0 bottom-0 right-16 w-[400px] max-w-[calc(100vw-4rem)] bg-white z-50 shadow-2xl overflow-y-auto slim-scroll border-l border-gray-200 flex flex-col">
+        <div class="flex items-center justify-between p-4 border-b border-gray-100">
+            <h2 class="font-bold text-gray-800 text-base">ویرایش پروفایل</h2>
+            <button onclick="closeEditProfilePanel()" class="text-gray-700 hover:text-gray-900 transition p-1.5 rounded-full hover:bg-black/5" title="بازگشت">
+                <i class="fa-solid fa-arrow-right text-lg"></i>
+            </button>
+        </div>
+
+        <div class="p-6 flex-1 overflow-y-auto slim-scroll space-y-6">
+            <div class="flex flex-col items-center justify-center">
+                <input type="file" id="edit-avatar-input" accept="image/*" class="hidden">
+                <label for="edit-avatar-input" class="relative w-24 h-24 rounded-full bg-gray-200 border-4 border-white shadow-md overflow-hidden mb-2 group cursor-pointer block">
+                    <img id="edit-avatar-preview" src="" class="w-full h-full object-cover">
+                    <div class="absolute inset-0 bg-black/30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition">
+                        <i class="fa-solid fa-camera text-white text-xl"></i>
+                    </div>
+                </label>
+                <label for="edit-avatar-input" class="text-sm font-medium text-blue-600 hover:text-blue-700 cursor-pointer">تغییر عکس نمایە</label>
+            </div>
+
+            <div class="space-y-4">
+                <div>
+                    <div class="relative"><input type="text" id="edit-name" placeholder="نام" class="w-full px-4 py-3 bg-white border border-gray-300 rounded-xl text-sm outline-none"></div>
+                </div>
+                <div>
+                    <div class="relative"><input type="text" id="edit-family" placeholder="نام خانوادگی" class="w-full px-4 py-3 bg-white border border-gray-300 rounded-xl text-sm outline-none"></div>
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-gray-700 mb-2">نقش کاربری</label>
+                    <div class="grid grid-cols-2 gap-3">
+                        <label class="flex items-center justify-center gap-2 p-3 border border-gray-300 rounded-xl cursor-pointer hover:bg-gray-50 transition has-[:checked]:border-blue-600 has-[:checked]:bg-blue-50">
+                            <input type="radio" name="user-role" value="passenger" class="text-blue-600 focus:ring-blue-500" checked>
+                            <span class="text-sm font-medium text-gray-700">مسافر</span>
+                        </label>
+                        <label class="flex items-center justify-center gap-2 p-3 border border-gray-300 rounded-xl cursor-pointer hover:bg-gray-50 transition has-[:checked]:border-blue-600 has-[:checked]:bg-blue-50">
+                            <input type="radio" name="user-role" value="driver" class="text-blue-600 focus:ring-blue-500">
+                            <span class="text-sm font-medium text-gray-700">راننده</span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="p-4 border-t border-gray-100 bg-white flex gap-3 mt-auto">
+            <button onclick="saveProfileChanges()" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 rounded-xl shadow transition text-sm">ثبت</button>
+            <button onclick="closeEditProfilePanel()" class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium py-3 rounded-xl transition text-sm">انصراف</button>
+        </div>
+    </aside>
+
+    <!-- STANDARD ROUTING PANEL -->
+    <!-- UPGRADED: Added absolute top-16 to sit below search bar like the other panels -->
+    <aside id="dir-panel" class="hidden fixed top-0 bottom-0 right-16 w-[420px] max-w-[calc(100vw-4rem)] bg-white z-40 shadow-2xl overflow-hidden border-l border-gray-200">
+        <div id="route-selection-view" class="h-full overflow-y-auto slim-scroll p-4 space-y-4">
+            <div class="flex items-center justify-between">
+                <h2 class="font-bold text-gray-800 text-base">مسیریابی</h2>
+                <button onclick="closeDirections()" class="text-gray-500 hover:text-gray-900 p-1"><i class="fa-solid fa-xmark text-lg"></i></button>
+            </div>
+
+            <div class="grid grid-cols-3 gap-2" id="profile-tabs">
+                <button data-p="car" onclick="setProfile('car')" class="profile-tab flex flex-col items-center gap-1 py-2 rounded-xl border text-xs"><i class="fa-solid fa-car text-base"></i>خودرو</button>
+                <button data-p="transit" onclick="setProfile('transit')" class="profile-tab flex flex-col items-center gap-1 py-2 rounded-xl border text-xs"><i class="fa-solid fa-bus text-base"></i>همگانی</button>
+                <button data-p="foot" onclick="setProfile('foot')" class="profile-tab flex flex-col items-center gap-1 py-2 rounded-xl border text-xs"><i class="fa-solid fa-person-walking text-base"></i>پیاده</button>
+            </div>
+
+            <div class="border border-gray-200 rounded-2xl p-2 flex items-center gap-2">
+                <div class="flex-1 min-w-0">
+                    <div class="relative">
+                        <span class="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none text-blue-600"><i class="fa-regular fa-circle text-xs"></i></span>
+                        <input id="start-point" type="text" autocomplete="off" placeholder="مبدا را بنویسید یا انتخاب کنید" class="w-full pr-8 pl-9 py-2.5 bg-transparent text-sm outline-none">
+                        <button type="button" onclick="startPicking('start')" class="absolute inset-y-0 left-0 px-2 text-gray-400 hover:text-blue-600"><i class="fa-solid fa-crosshairs"></i></button>
+                        <div id="suggest-start" class="suggest-box"></div>
+                    </div>
+                    <div class="border-t border-dashed border-gray-200 mx-2"></div>
+                    <div class="relative">
+                        <span class="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none text-red-500"><i class="fa-solid fa-location-dot text-xs"></i></span>
+                        <input id="dest-point" type="text" autocomplete="off" placeholder="مقصد را بنویسید یا انتخاب کنید" class="w-full pr-8 pl-9 py-2.5 bg-transparent text-sm outline-none">
+                        <button type="button" onclick="startPicking('dest')" class="absolute inset-y-0 left-0 px-2 text-gray-400 hover:text-red-500"><i class="fa-solid fa-crosshairs"></i></button>
+                        <div id="suggest-dest" class="suggest-box"></div>
+                    </div>
+                </div>
+                <button onclick="swapPoints()" class="p-2 text-gray-600 hover:text-blue-600"><i class="fa-solid fa-arrow-right-arrow-left rotate-90 text-lg"></i></button>
+            </div>
+
+            <div id="saved-places" class="flex items-center gap-3 border-b border-gray-100 pb-3"></div>
+
+            <div>
+                <div class="text-xs text-gray-500 mb-2">نوع مسیر را انتخاب کنید</div>
+                <div class="grid grid-cols-2 gap-1 bg-gray-50 border border-gray-200 rounded-xl p-1">
+                    <button id="mode-time" onclick="setRouteMode('time')">کمترین زمان</button>
+                    <button id="mode-cost" onclick="setRouteMode('cost')">کمترین هزینه</button>
+                </div>
+            </div>
+
+            <div id="road-panel" class="space-y-3"></div>
+        </div>
+        
+        <!-- PAGE 2: Route Steps View -->
+        <div id="route-steps-view" class="hidden flex-col h-full bg-white relative z-30">
+            <div class="flex items-center p-4 border-b border-gray-100 shadow-sm cursor-pointer hover:bg-gray-50 transition" onclick="hideRouteSteps()">
+                <i class="fa-solid fa-arrow-right text-gray-600 ml-2"></i>
+                <span class="font-bold text-gray-800 text-sm">بازگشت</span>
+            </div>
+            <div class="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+                 <div class="text-right">
+                     <div id="steps-route-title" class="font-bold text-gray-800 text-sm mb-1.5"></div>
+                     <div class="text-xs text-gray-600 flex items-center gap-2">
+                         <span id="steps-route-dist"></span>
+                         <span class="w-1 h-1 rounded-full bg-gray-300"></span>
+                         <span id="steps-route-time"></span>
+                     </div>
+                 </div>
+                 <div class="w-10 h-10 bg-white border border-gray-200 rounded-full flex items-center justify-center shadow-sm">
+                     <i id="steps-route-icon" class="text-gray-500 text-lg"></i>
+                 </div>
+            </div>
+            <div class="px-4 py-3 border-b border-gray-100"><div class="text-sm font-bold text-gray-800">گام‌های مسیر</div></div>
+            <div id="steps-list" class="flex-1 overflow-y-auto slim-scroll px-4 py-2 space-y-0 pb-10"></div>
+        </div>
+
+        <!-- PAGE 3: Saved Places View -->
+        <div id="saved-places-view" class="hidden flex-col h-full bg-white relative z-30">
+            <div class="flex items-center gap-3 p-4 border-b border-gray-100 shadow-sm">
+                <button onclick="hideSavedPlacesView()" class="text-gray-500 hover:text-gray-800 p-1"><i class="fa-solid fa-arrow-right"></i></button>
+                <div class="flex-1 bg-gray-100 rounded-full flex items-center px-4 py-2 gap-2">
+                    <input type="text" placeholder="جستجوی مکان‌های شخصی" class="bg-transparent text-sm outline-none w-full text-right" dir="rtl">
+                    <i class="fa-solid fa-magnifying-glass text-gray-400 text-sm"></i>
+                </div>
+            </div>
+            <div id="extended-saved-list" class="flex-1 overflow-y-auto slim-scroll pb-10"></div>
+        </div>
+    </aside>
+
+    <!-- NEW HAMSAFAR PANEL (Standalone Feature) -->
+    <!-- UPGRADED: Added absolute top-16 -->
+    <aside id="hamsafar-panel" class="hidden fixed top-0 bottom-0 right-16 w-[420px] max-w-[calc(100vw-4rem)] bg-white z-40 shadow-2xl overflow-hidden border-l border-gray-200 flex-col">
+        <div class="p-4 border-b border-gray-100 flex items-center justify-between shadow-sm shrink-0 bg-white">
+            <h2 class="font-bold text-gray-800 text-base text-center w-full justify-center">همسفر</h2>
+            <button onclick="closeHamsafarPanel()" class="text-gray-500 hover:text-gray-900 p-1 transition absolute left-4"><i class="fa-solid fa-xmark text-lg"></i></button>
+        </div>
+
+        <div class="p-4 flex-1 flex flex-col gap-4 overflow-hidden">
+            <!-- Inputs & Time Scheduler -->
+            <div class="border border-gray-200 rounded-2xl p-2 flex flex-col gap-2 shadow-sm shrink-0">
+                <div class="flex items-center gap-2">
+                    <div class="flex-1 min-w-0">
+                        <div class="relative">
+                            <span class="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none text-blue-600"><i class="fa-regular fa-circle text-xs"></i></span>
+                            <input id="h-start-point" type="text" autocomplete="off" placeholder="مبدا را بنویسید یا انتخاب کنید" class="w-full pr-8 pl-9 py-2 bg-transparent text-sm outline-none">
+                            <button type="button" onclick="startPicking('h-start')" class="absolute inset-y-0 left-0 px-2 text-gray-400 hover:text-blue-600"><i class="fa-solid fa-crosshairs"></i></button>
+                            <div id="suggest-h-start" class="suggest-box"></div>
+                        </div>
+                        <div class="border-t border-dashed border-gray-200 mx-2"></div>
+                        <div class="relative">
+                            <span class="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none text-red-500"><i class="fa-solid fa-location-dot text-xs"></i></span>
+                            <input id="h-dest-point" type="text" autocomplete="off" placeholder="مقصد را بنویسید یا انتخاب کنید" class="w-full pr-8 pl-9 py-2 bg-transparent text-sm outline-none">
+                            <button type="button" onclick="startPicking('h-dest')" class="absolute inset-y-0 left-0 px-2 text-gray-400 hover:text-red-500"><i class="fa-solid fa-crosshairs"></i></button>
+                            <div id="suggest-h-dest" class="suggest-box"></div>
+                        </div>
+                    </div>
+                    <button onclick="swapPoints()" class="p-2 text-gray-600 hover:text-blue-600"><i class="fa-solid fa-arrow-right-arrow-left rotate-90 text-lg"></i></button>
+                </div>
+                
+                <!-- Schedule Toggle Area -->
+                <div class="mt-1 pt-2 border-t border-gray-100">
+                    <div class="flex bg-gray-100 p-1 rounded-lg">
+                        <button id="btn-time-now" onclick="toggleScheduleMode('now')" class="flex-1 text-[11px] font-bold py-1.5 rounded-md bg-white shadow text-blue-600 transition">همین الان</button>
+                        <button id="btn-time-later" onclick="toggleScheduleMode('later')" class="flex-1 text-[11px] font-medium py-1.5 rounded-md text-gray-500 hover:text-gray-700 transition">برنامه‌ریزی</button>
+                    </div>
+                    <div id="schedule-picker" class="hidden gap-2 mt-2">
+                        <select id="schedule-date" class="flex-1 bg-white border border-gray-200 rounded-lg text-xs p-2 outline-none focus:border-blue-400 cursor-pointer">
+                            <option value="today">امروز</option>
+                            <option value="tomorrow">فردا</option>
+                            <option value="day_after">پس‌فردا</option>
+                        </select>
+                        <input type="time" id="schedule-time" class="flex-1 bg-white border border-gray-200 rounded-lg text-xs p-2 outline-none focus:border-blue-400 cursor-pointer" dir="ltr">
+                    </div>
+                    <button id="btn-create-planned" onclick="createPlannedRequest()" class="hidden w-full mt-2 bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 rounded-lg shadow transition text-xs"><i class="fa-solid fa-calendar-plus ml-1"></i> ایجاد درخواست</button>
+                </div>
+            </div>
+
+            <!-- Renamed Tabs -->
+            <div class="grid grid-cols-3 gap-1 bg-gray-50 border border-gray-200 rounded-xl p-1 shadow-sm mt-1 shrink-0">
+                <button id="htab-nearby" onclick="switchHTab('nearby')" class="py-2 rounded-lg text-[11px] font-bold bg-blue-600 text-white shadow transition">افراد مشابه</button>
+                <button id="htab-accepted" onclick="switchHTab('accepted')" class="py-2 rounded-lg text-[11px] font-medium text-gray-600 hover:bg-gray-100 transition">درخواست‌های شما</button>
+                <button id="htab-group" onclick="switchHTab('group')" class="py-2 rounded-lg text-[11px] font-medium text-gray-600 hover:bg-gray-100 transition">گروه همسفر</button>
+            </div>
+
+            <!-- CONTENT: Similar Travelers -->
+            <div id="hcontent-nearby" class="flex-1 flex flex-col gap-3 mt-1 overflow-y-auto slim-scroll">
+                <p class="text-xs text-gray-500 shrink-0" id="person-mode-desc">مبدا و مقصد خود را وارد کنید تا همسفران نشان داده شوند.</p>
+                <div id="travelers-list" class="space-y-2 pb-6"></div>
+                
+                <div id="h-selected-person-panel" class="hidden space-y-4 border border-blue-200 rounded-xl p-3 bg-blue-50/30 shrink-0">
+                    <div id="panel-group-members" class="space-y-2"></div>
+                    <div id="request-status-box" class="hidden bg-amber-50 border border-amber-200 p-2 rounded-lg text-xs flex items-center gap-2"></div>
+                    <div class="flex gap-2">
+                        <button onclick="sendRideRequest()" id="btn-send-req" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 rounded-lg shadow transition text-xs"><i class="fa-solid fa-paper-plane mr-1"></i> ارسال درخواست</button>
+                        <button onclick="cancelOrNevermind()" id="btn-cancel-req" class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium py-2 rounded-lg transition text-xs">انصراف</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- CONTENT: Your Requests -->
+            <div id="hcontent-accepted" class="hidden flex-1 flex flex-col gap-4 mt-1 overflow-y-auto slim-scroll">
+                <div id="incoming-requests-container" class="hidden flex-col gap-2 bg-white border border-blue-200 rounded-xl p-3 shadow-sm shrink-0">
+                    <h3 class="font-bold text-blue-700 text-xs border-b border-blue-100 pb-2 mb-1"><i class="fa-solid fa-inbox mr-1"></i> درخواست‌های دریافتی</h3>
+                    <div id="incoming-requests-list" class="space-y-2 max-h-48 overflow-y-auto slim-scroll"></div>
+                </div>
+
+                <div id="planned-requests-container" class="hidden flex-col gap-2 bg-white border border-emerald-200 rounded-xl p-3 shadow-sm shrink-0">
+                    <h3 class="font-bold text-emerald-700 text-xs border-b border-emerald-100 pb-2 mb-1"><i class="fa-solid fa-calendar-check ml-1"></i> درخواست‌های برنامه‌ریزی‌شده شما</h3>
+                    <div id="planned-requests-list" class="space-y-2"></div>
+                </div>
+
+                <div id="accepted-requests-container">
+                    <p id="accepted-requests-title" class="text-xs text-gray-500 mb-2 shrink-0 border-b border-gray-200 pb-2">وضعیت فعلی همسفران شما:</p>
+                    <div id="h-accepted-list" class="space-y-2 pb-6"></div>
+                </div>
+            </div>
+
+            <!-- CONTENT: Group Chat -->
+            <div id="hcontent-group" class="hidden flex-1 flex-col relative mt-1 bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+                
+                <div id="h-chat-empty" class="flex-1 flex flex-col items-center justify-center text-center p-6 bg-gray-50 h-full">
+                    <div class="w-16 h-16 bg-blue-100 text-blue-500 rounded-full flex items-center justify-center text-3xl mb-4"><i class="fa-solid fa-comments"></i></div>
+                    <h3 class="font-bold text-gray-800 mb-2">گروهی برای نمایش نیست</h3>
+                    <p class="text-xs text-gray-500 leading-relaxed">وقتی با کسی همسفر شدی، اینجا برات گروه ساخته میشه تا بتونید راحت‌تر برای مسیر و زمان حرکت هماهنگ کنید.</p>
+                </div>
+
+                <div id="h-chat-active" class="hidden flex-col w-full h-full">
+                    <div class="flex items-center justify-between px-3 py-2 border-b border-gray-100 bg-white shadow-sm z-10 shrink-0">
+                        <div class="flex items-center gap-2 cursor-pointer" onclick="openGroupInfo()">
+                            <span class="font-bold text-gray-800 text-sm py-1">گروه همسفر</span>
+                        </div>
+                        <div class="relative">
+                            <button onclick="toggleGroupMenu('chat-menu', event)" class="text-gray-600 p-1.5 hover:bg-gray-100 rounded-full transition"><i class="fa-solid fa-ellipsis-vertical"></i></button>
+                            <div id="chat-menu" class="hidden absolute left-0 top-10 w-36 bg-white shadow-lg rounded-lg border border-gray-100 z-50 py-1">
+                                <button class="w-full text-right px-3 py-2 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-2"><i class="fa-solid fa-search w-4 text-center"></i> جستجو</button>
+                                <button class="w-full text-right px-3 py-2 text-xs text-gray-700 hover:bg-gray-50 flex items-center gap-2"><i class="fa-solid fa-circle-exclamation w-4 text-center"></i> گزارش</button>
+                                <button onclick="leaveGroup()" class="w-full text-right px-3 py-2 text-xs text-red-600 hover:bg-red-50 flex items-center gap-2"><i class="fa-solid fa-arrow-right-from-bracket w-4 text-center"></i> ترک گروه</button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div id="h-chat-messages" class="flex-1 overflow-y-auto hide-scroll bg-[#e5e5e5] p-3 space-y-3 flex flex-col">
+                        <div class="text-center text-[10px] text-gray-500 my-1 bg-white/60 mx-auto px-2 py-0.5 rounded-full">به گروه همسفران خوش آمدید</div>
+                    </div>
+                    
+                    <form onsubmit="event.preventDefault(); sendChatMessage();" class="flex items-center gap-2 p-2 bg-white border-t border-gray-200 shrink-0">
+                        <button type="button" onclick="convertToPermanentGroup()" class="w-8 h-8 rounded-full border border-gray-300 text-gray-400 hover:text-purple-600 flex items-center justify-center transition shrink-0" title="ذخیره به عنوان گروه دائمی"><i class="fa-solid fa-plus text-sm"></i></button>
+                        <input type="text" id="h-chat-input" class="flex-1 bg-transparent text-sm outline-none px-1" placeholder="پیام...">
+                        <button type="button" class="text-gray-400 hover:text-gray-600 px-2 py-1 transition shrink-0"><i class="fa-regular fa-face-smile text-xl"></i></button>
+                        <button type="submit" class="hidden"></button>
+                    </form>
+                </div>
+
+                <div id="h-chat-info" class="hidden flex-col w-full h-full absolute inset-0 z-20 bg-gray-50 overflow-y-auto slim-scroll">
+                    <div class="flex items-center justify-between p-3 bg-white border-b border-gray-100 shadow-sm sticky top-0 z-10 shrink-0">
+                        <button onclick="closeGroupInfo()" class="text-gray-600 p-1.5 hover:bg-gray-100 rounded-full transition"><i class="fa-solid fa-arrow-right text-lg"></i></button>
+                        <span class="font-bold text-gray-800 text-base">گروه همسفر</span>
+                        <div class="relative">
+                            <button onclick="leaveGroup()" class="text-red-500 p-1.5 hover:bg-red-50 rounded-full transition" title="ترک گروه">
+                                <i class="fa-solid fa-arrow-right-from-bracket text-lg"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="bg-white flex-1 p-3">
+                        <div id="group-members-list" class="space-y-3 pb-6"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </aside>
+
+    <!-- PERMANENT GROUPS PANEL -->
+    <!-- UPGRADED: Added absolute top-16 -->
+    <aside id="groups-panel" class="hidden fixed top-0 bottom-0 right-16 w-[420px] max-w-[calc(100vw-4rem)] bg-white z-40 shadow-2xl overflow-hidden border-l border-gray-200 flex-col">
+        <!-- List View -->
+        <div id="perm-groups-list-view" class="flex flex-col h-full bg-white">
+            <div class="p-4 border-b border-gray-100 flex items-center justify-between shadow-sm shrink-0 bg-white">
+                <h2 class="font-bold text-gray-800 text-base text-center w-full">گروه‌های من</h2>
+                <button onclick="closePermGroupsPanel()" class="text-gray-500 hover:text-gray-900 p-1 transition absolute left-4"><i class="fa-solid fa-xmark text-lg"></i></button>
+            </div>
+            
+            <div class="p-3 bg-gray-50 border-b border-gray-100 shrink-0">
+                <div class="bg-white rounded-full border border-gray-200 flex items-center px-3 h-9 gap-2">
+                    <i class="fa-solid fa-magnifying-glass text-gray-400 text-xs"></i>
+                    <input type="text" placeholder="جستجوی گروه..." class="flex-1 bg-transparent outline-none text-xs">
+                </div>
+            </div>
+
+            <div id="perm-groups-list-container" class="flex-1 overflow-y-auto slim-scroll">
+                <!-- Groups dynamically loaded here -->
+            </div>
+        </div>
+
+        <!-- Chat View -->
+        <div id="perm-groups-chat-view" class="hidden flex-col h-full bg-white relative">
+            <div class="flex items-center justify-between p-3 bg-white border-b border-gray-100 shadow-sm z-10 shrink-0">
+                <div class="flex items-center gap-3">
+                    <button onclick="closePermChat()" class="text-gray-600 p-1.5 hover:bg-gray-100 rounded-full transition"><i class="fa-solid fa-arrow-right text-lg"></i></button>
+                    
+                    <img id="perm-chat-avatar" src="" class="w-10 h-10 rounded-full object-cover border border-gray-200 cursor-pointer" onclick="openPermGroupDetail()">
+                    
+                    <div class="flex flex-col cursor-pointer" onclick="openPermGroupDetail()">
+                        <span id="perm-chat-title" class="font-bold text-gray-800 text-sm hover:underline"></span>
+                        <span id="perm-chat-subtitle" class="text-[10px] text-gray-500"></span>
+                    </div>
+                </div>
+                <button class="text-gray-600 p-1.5 hover:bg-gray-100 rounded-full transition"><i class="fa-solid fa-ellipsis-vertical text-lg"></i></button>
+            </div>
+            
+            <div id="perm-chat-messages" class="flex-1 overflow-y-auto hide-scroll bg-[#e5e5e5] p-3 space-y-3 flex flex-col">
+                <!-- Chat messages loaded here -->
+            </div>
+            
+            <form onsubmit="event.preventDefault(); sendPermChatMessage();" class="flex items-center gap-2 p-2 bg-white border-t border-gray-200 shrink-0">
+                <button type="button" class="text-gray-400 hover:text-gray-600 px-2 py-1 transition shrink-0"><i class="fa-solid fa-paperclip text-lg"></i></button>
+                <input type="text" id="perm-chat-input" class="flex-1 bg-transparent text-sm outline-none px-1" placeholder="پیام...">
+                <button type="submit" class="hidden"></button>
+            </form>
+        </div>
+        
+        <div id="perm-group-detail-view" class="hidden flex-col w-full h-full absolute inset-0 z-20 bg-gray-50 overflow-y-auto slim-scroll">
+            <div class="flex items-center gap-4 p-3 bg-white border-b border-gray-100 shadow-sm sticky top-0 z-10 shrink-0">
+                <button onclick="closePermGroupDetail()" class="text-gray-600 p-1.5 hover:bg-gray-100 rounded-full transition"><i class="fa-solid fa-arrow-right text-lg"></i></button>
+                <span class="font-bold text-gray-800 text-base">اطلاعات گروه</span>
+            </div>
+            
+            <div class="bg-white p-6 text-center border-b border-gray-200 shrink-0">
+                <div class="flex items-center justify-center gap-2 group">
+                    <h2 id="detail-group-name" class="font-bold text-xl text-gray-800 border-b-2 border-transparent"></h2>
+                    <button id="edit-group-name-btn" class="hidden text-gray-400 hover:text-blue-600 p-1 transition" onclick="toggleGroupNameEdit()">
+                        <i class="fa-solid fa-pen text-sm"></i>
+                    </button>
+                </div>
+                <div id="edit-group-name-container" class="hidden flex-col items-center gap-2 mt-2">
+                    <input type="text" id="edit-group-name-input" class="border border-blue-400 rounded-lg px-3 py-1.5 text-sm outline-none w-3/4 text-center">
+                    <div class="flex gap-2">
+                        <button onclick="saveGroupName()" class="bg-blue-600 hover:bg-blue-700 text-white text-xs px-3 py-1 rounded-md shadow-sm">ذخیره</button>
+                        <button onclick="toggleGroupNameEdit()" class="bg-gray-100 hover:bg-gray-200 text-gray-600 text-xs px-3 py-1 rounded-md">انصراف</button>
+                    </div>
+                </div>
+                <p id="detail-group-count" class="text-xs text-gray-500 mt-2"></p>
+            </div>
+            
+            <div class="bg-white mt-2 p-3 border-y border-gray-200 shrink-0">
+                <div class="flex justify-between items-center py-2">
+                    <div class="flex flex-col">
+                        <span class="text-[10px] text-gray-400 font-bold uppercase mb-0.5">لینک دعوت</span>
+                        <a href="#" class="text-sm text-blue-600 hover:underline">https://t.me/goftegoosh...</a>
+                        <span class="text-xs text-gray-500 mt-1">Link</span>
+                    </div>
+                    <i class="fa-solid fa-qrcode text-gray-400 text-lg cursor-pointer"></i>
+                </div>
+            </div>
+            
+            <div class="bg-white mt-2 p-3 border-y border-gray-200 shrink-0">
+                <div class="flex justify-between items-center py-1">
+                    <span class="text-sm font-medium text-gray-800">اعلان‌ها (Notifications)</span>
+                    <label class="relative inline-flex items-center cursor-pointer">
+                      <input type="checkbox" value="" class="sr-only peer" checked>
+                      <div class="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+                    </label>
+                </div>
+            </div>
+
+            <div class="bg-white mt-2 flex-1 border-t border-gray-200">
+                <div class="flex text-xs font-bold text-gray-400 border-b border-gray-100 px-4 pt-3 pb-2">
+                    <span class="text-blue-600 border-b-2 border-blue-600 pb-2 cursor-default">اعضا (Members)</span>
+                </div>
+                
+                <div class="flex items-center gap-3 p-3 border-b border-gray-50 hover:bg-gray-50 cursor-pointer transition">
+                    <div class="w-10 h-10 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center shrink-0">
+                        <i class="fa-solid fa-user-plus"></i>
+                    </div>
+                    <span class="font-bold text-sm text-blue-600">افزودن عضو جدید</span>
+                </div>
+                
+                <div id="detail-members-list" class="pb-6">
+                    <!-- Members injected dynamically here -->
+                </div>
+            </div>
+        </div>
+    </aside>
+
+    <!-- ZOOM / LOCATE -->
+    <div class="fixed bottom-14 left-5 z-20 rounded-xl overflow-hidden shadow-lg bg-white flex flex-col">
+        <button onclick="map.zoomIn()" class="zoom-btn" title="بزرگنمایی"><i class="fa-solid fa-plus"></i></button>
+        <div style="height:1px;background:#e5e7eb"></div>
+        <button onclick="map.zoomOut()" class="zoom-btn" title="کوچک‌نمایی"><i class="fa-solid fa-minus"></i></button>
+        <div style="height:1px;background:#e5e7eb"></div>
+        <button onclick="locateMe()" class="zoom-btn" title="موقعیت من"><i class="fa-solid fa-location-crosshairs"></i></button>
+    </div>
+
+    <!-- NOTIFICATION MODAL -->
+    <div id="incoming-req-modal" style="display:none;position:fixed;inset:0;background-color:rgba(0,0,0,.5);z-index:10000;align-items:center;justify-content:center;backdrop-filter:blur(4px);">
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 relative border border-gray-100 mx-4 text-center">
+            <div class="w-16 h-16 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center mx-auto text-3xl mb-3 shadow-inner"><i class="fa-solid fa-bell"></i></div>
+            <h3 class="font-bold text-gray-800 text-lg mb-1">درخواست همسفری جدید!</h3>
+            <p class="text-sm text-gray-600 leading-relaxed mb-6" id="incoming-req-text">شما درخواست‌های جدیدی برای همسفری دارید.</p>
+            <button onclick="viewRequests()" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2.5 rounded-xl shadow transition text-sm">مشاهده (View)</button>
+        </div>
+    </div>
+
+    <!-- UNIVERSAL CONFIRM MODAL -->
+    <div id="confirm-modal" style="display:none;position:fixed;inset:0;background-color:rgba(0,0,0,.5);z-index:10000;align-items:center;justify-content:center;backdrop-filter:blur(4px);">
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 relative border border-gray-100 mx-4 text-center">
+            <div id="confirm-icon-box" class="w-16 h-16 rounded-full flex items-center justify-center mx-auto text-3xl mb-4 shadow-inner bg-red-50 text-red-500">
+                <i id="confirm-icon" class="fa-solid fa-triangle-exclamation"></i>
+            </div>
+            <h3 id="confirm-title" class="font-bold text-gray-800 text-lg mb-2">تایید</h3>
+            <p id="confirm-desc" class="text-sm text-gray-600 leading-relaxed mb-6">آیا مطمئن هستید؟</p>
+            <div class="flex gap-3">
+                <button id="confirm-yes-btn" class="flex-1 font-medium py-2.5 rounded-xl shadow transition text-sm text-white bg-red-500 hover:bg-red-600">بله</button>
+                <button onclick="closeConfirmModal()" class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium py-2.5 rounded-xl transition text-sm">انصراف</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- AUTH MODAL -->
+    <div id="auth-modal" style="display:none;position:fixed;inset:0;background-color:rgba(0,0,0,.5);z-index:9999;align-items:center;justify-content:center;backdrop-filter:blur(4px);">
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 relative border border-gray-100 mx-4">
+            <button onclick="closeAuthModal()" class="absolute top-4 left-4 text-gray-400 hover:text-gray-600"><i class="fa-solid fa-xmark text-lg"></i></button>
+            <div class="flex border-b border-gray-200 mb-6 pb-2 gap-4">
+                <button onclick="switchAuthTab('login')" id="tab-login" class="font-bold text-blue-600 border-b-2 border-blue-600 pb-1 text-sm transition">ورود به حساب</button>
+                <button onclick="switchAuthTab('signup')" id="tab-signup" class="font-medium text-gray-500 pb-1 text-sm transition">ثبت‌نام جدید</button>
+            </div>
+            <div id="form-login" class="space-y-4">
+                <div>
+                    <label class="block text-xs font-medium text-gray-700 mb-1">شماره موبایل</label>
+                    <input type="text" id="login-phone" placeholder="09123456789" class="w-full px-4 py-2 bg-gray-50 border border-gray-300 rounded-xl text-sm outline-none" dir="ltr">
+                </div>
+                <button onclick="handleLogin()" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2.5 rounded-xl shadow transition text-sm">ورود به سامانه</button>
+            </div>
+            <div id="form-signup" class="hidden space-y-3">
+                <div class="grid grid-cols-2 gap-2">
+                    <div>
+                        <label class="block text-xs font-medium text-gray-700 mb-1">نام *</label>
+                        <input type="text" id="signup-name" placeholder="مثلاً علی" class="w-full px-3 py-2 bg-gray-50 border border-gray-300 rounded-xl text-sm outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-700 mb-1">نام خانوادگی *</label>
+                        <input type="text" id="signup-family" placeholder="مثلاً کریمی" class="w-full px-3 py-2 bg-gray-50 border border-gray-300 rounded-xl text-sm outline-none">
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-gray-700 mb-1">شماره موبایل *</label>
+                    <input type="text" id="signup-phone" placeholder="09123456789" class="w-full px-4 py-2 bg-gray-50 border border-gray-300 rounded-xl text-sm outline-none" dir="ltr">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-gray-700 mb-1">تاریخ تولد *</label>
+                    <div class="grid grid-cols-3 gap-2" dir="ltr">
+                        <select id="signup-year" class="px-2 py-2 bg-gray-50 border border-gray-300 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"><option value="">سال</option></select>
+                        <select id="signup-month" class="px-2 py-2 bg-gray-50 border border-gray-300 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                            <option value="">ماه</option>
+                            <option value="01">فروردین</option><option value="02">اردیبهشت</option><option value="03">خرداد</option>
+                            <option value="04">تیر</option><option value="05">مرداد</option><option value="06">شهریور</option>
+                            <option value="07">مهر</option><option value="08">آبان</option><option value="09">آذر</option>
+                            <option value="10">دی</option><option value="11">بهمن</option><option value="12">اسفند</option>
+                        </select>
+                        <select id="signup-day" class="px-2 py-2 bg-gray-50 border border-gray-300 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"><option value="">روز</option></select>
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-gray-700 mb-1">تصویر پروفایل (اختیاری)</label>
+                    <input type="file" id="signup-avatar-file" accept="image/*" class="w-full text-xs text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100 cursor-pointer">
+                </div>
+                <button onclick="handleSignup()" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-2.5 rounded-xl shadow transition text-sm mt-2">تایید و ثبت‌نام</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+
+    <script>
+        // ---------- API & Helpers ----------
+        const API_BASE = 'http://localhost:3000/api';
+        const $ = id => document.getElementById(id);
+        const fa = n => Number(n).toLocaleString('fa-IR');
+        const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+        const DEFAULT_AVATAR = 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150';
+        const AVATAR_FALLBACK = "this.onerror=null;this.src='https://placehold.co/150x150/10b981/ffffff?text=U'";
+
+        const ICON_2_USERS = './two_users.jpg';
+        const ICON_3_USERS = './three_users.png';
+
+        function showToast(message, type = 'info', ms = 3500) {
+            const toast = document.createElement('div');
+            const bg = type === 'error' ? 'bg-red-600' : type === 'success' ? 'bg-emerald-600' : 'bg-gray-800';
+            toast.className = `${bg} text-white text-xs font-medium px-4 py-2.5 rounded-xl shadow-lg flex items-center gap-2 transition-all duration-300 pointer-events-auto`;
+            toast.innerHTML = `<i class="fa-solid ${type === 'error' ? 'fa-circle-exclamation' : 'fa-circle-check'}"></i> <span>${message}</span>`;
+            $('toast-container').appendChild(toast);
+            setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 300); }, ms);
+        }
+        
+        let pendingConfirmCallback = null;
+        function openConfirmModal(title, desc, iconClass, btnText, callback) {
+            $('confirm-title').innerText = title;
+            $('confirm-desc').innerText = desc;
+            $('confirm-icon').className = `fa-solid ${iconClass}`;
+            $('confirm-yes-btn').innerText = btnText;
+            pendingConfirmCallback = callback;
+            $('confirm-modal').style.display = 'flex';
+        }
+        function closeConfirmModal() {
+            $('confirm-modal').style.display = 'none';
+            pendingConfirmCallback = null;
+        }
+        $('confirm-yes-btn').addEventListener('click', () => {
+            if (pendingConfirmCallback) pendingConfirmCallback();
+            closeConfirmModal();
+        });
+
+        // ---------- Map ----------
+        const map = L.map('map', { zoomControl: false, attributionControl: false }).setView([35.6892, 51.3890], 13);
+        L.control.attribution({ position: 'bottomleft', prefix: false }).addTo(map);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
+
+        // ---------- State ----------
+        window.myGroupMemberCount = 1;
+        let travelScheduleMode = 'now'; 
+
+        let panelOpen = false;
+        let hamsafarOpen = false;
+        let permGroupsOpen = false;
+        let mainMenuOpen = false;
+        let profilePanelOpen = false;
+        
+        let currentHTab = 'nearby';
+        let routeMode = 'time';              
+        let profile = 'car';                 
+        let currentUser = null;
+        let pickMode = null;                 
+        
+        let pendingStationData = {};
+        let rawRoutes = [], rawKey = '', selectedRoute = 0, routeLayers = [];
+        let personMarkers = [], requestActive = false;
+        let searchMarker = null, searchPlace = null, lastFocused = null;
+        let tempAvatar = null;
+        const points = { start: null, dest: null };
+        const pointMarkers = { start: null, dest: null };
+        
+        const inputsMapping = {
+            'start': ['start-point', 'h-start-point'],
+            'dest': ['dest-point', 'h-dest-point'],
+            'search': ['search-input']
+        };
+        const saved = { home: null, work: null };
+
+        let currentSelectedTraveler = null;
+        let activeTravelersInterval = null;
+        let activeOutboundRequests = {}; 
+        let requestInsertionIndex = {}; 
+        
+        let activePermGroupId = null;
+        let previousPermMessageCount = -1;
+        let knownPermGroupIds = new Set();
+        let initialPermGroupsLoaded = false;
+
+        // ---------- Sidebar Icon Highlighter ----------
+        function updateSidebarIcons() {
+            const mapBtn = $('nav-btn-map');
+            const hamsafarBtn = $('nav-btn-hamsafar');
+            const groupsBtn = $('nav-btn-groups');
+            const profileBtn = $('nav-btn-profile');
+            
+            const activeClass = 'text-blue-600';
+            const inactiveClass = 'text-gray-600';
+            
+            if(mapBtn) { mapBtn.classList.remove(activeClass, inactiveClass); mapBtn.classList.add(mainMenuOpen ? activeClass : inactiveClass); }
+            if(hamsafarBtn) { hamsafarBtn.classList.remove(activeClass, inactiveClass); hamsafarBtn.classList.add(hamsafarOpen ? activeClass : inactiveClass); }
+            if(groupsBtn) { groupsBtn.classList.remove(activeClass, inactiveClass); groupsBtn.classList.add(permGroupsOpen ? activeClass : inactiveClass); }
+            if(profileBtn) { profileBtn.classList.remove(activeClass, inactiveClass); profileBtn.classList.add(profilePanelOpen ? activeClass : inactiveClass); }
+        }
+
+        // ---------- Map view helpers ----------
+        function panTo(lat, lng, zoom) {
+            const p = map.project([lat, lng], zoom);
+            if (panelOpen || hamsafarOpen || permGroupsOpen || mainMenuOpen) p.x += 240;
+            map.flyTo(map.unproject(p, zoom), zoom);
+        }
+        function fitTo(bounds) {
+            map.fitBounds(bounds, { paddingTopLeft: [50, 50], paddingBottomRight: [(panelOpen||hamsafarOpen||permGroupsOpen||mainMenuOpen) ? 500 : 80, 50] });
+        }
+
+        // ---------- Geocoding & Pins ----------
+        async function searchPlaces(q) {
+            const r = await fetch('https://nominatim.openstreetmap.org/search?format=jsonv2&limit=7&accept-language=fa&countrycodes=ir&addressdetails=1&q=' + encodeURIComponent(q));
+            return r.ok ? r.json() : [];
+        }
+        async function reverseGeocode(lat, lng) {
+            try {
+                const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&accept-language=fa&zoom=18&lat=${lat}&lon=${lng}`);
+                const d = await r.json();
+                if (d && d.display_name) return shortName(d);
+            } catch (e) {}
+            return `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+        }
+        function shortName(p) {
+            const a = p.address || {};
+            const main = p.name || a.road || a.neighbourhood || a.suburb || a.city || a.town || a.village || '';
+            const rest = [a.suburb || a.neighbourhood, a.city || a.town || a.village || a.county, a.state].filter(x => x && x !== main);
+            return [main, ...rest].filter(Boolean).join('، ') || p.display_name;
+        }
+        function pinIcon(color, icon) {
+            return L.divIcon({
+                className: 'pin',
+                html: `<div style="background:${color};width:34px;height:34px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);display:flex;align-items:center;justify-content:center;border:2px solid white;box-shadow:0 3px 8px rgba(0,0,0,.4)"><i class="fa-solid ${icon}" style="transform:rotate(45deg);color:white;font-size:13px"></i></div>`,
+                iconSize: [34, 34], iconAnchor: [17, 34], popupAnchor: [0, -34]
+            });
+        }
+        function setPoint(kind, lat, lng, label, fly = true) {
+            const coreKind = kind.replace('h-', ''); 
+            points[coreKind] = { lat, lng, label };
+            
+            if (inputsMapping[coreKind]) {
+                inputsMapping[coreKind].forEach(id => { const el = $(id); if(el) el.value = label; });
+            }
+            
+            if (pointMarkers[coreKind]) map.removeLayer(pointMarkers[coreKind]);
+            const m = L.marker([lat, lng], {
+                icon: coreKind === 'start' ? pinIcon('#2563eb', 'fa-circle-dot') : pinIcon('#ef4444', 'fa-flag-checkered'),
+                draggable: true
+            }).addTo(map).bindPopup(esc(label));
+            
+            m.on('dragend', async (e) => {
+                const ll = e.target.getLatLng();
+                const name = await reverseGeocode(ll.lat, ll.lng);
+                setPoint(coreKind, ll.lat, ll.lng, name, false);
+                if (bothFilled()) handleRoutingAction();
+            });
+            pointMarkers[coreKind] = m;
+            
+            hideBox(kind);
+            
+            if (fly && !bothFilled()) panTo(lat, lng, Math.max(map.getZoom(), 15));
+        }
+
+        // ---------- Suggestions & Search ----------
+        const debounceTimers = {};
+        
+        function getBox(id) {
+            const mapId = { 'start': 'suggest-start', 'dest': 'suggest-dest', 'h-start': 'suggest-h-start', 'h-dest': 'suggest-h-dest', 'search': 'suggest-search' };
+            return $(mapId[id] || id);
+        }
+        function hideBox(id) { 
+            const b = getBox(id); 
+            if(b) b.style.display = 'none'; 
+        }
+        function showBoxItems(id, items) {
+            const box = getBox(id);
+            if(!box) return;
+            box.innerHTML = '';
+            items.forEach(it => {
+                const el = document.createElement('div');
+                el.className = 'suggest-item';
+                el.innerHTML = `<i class="fa-solid ${it.icon}"></i><div><div>${esc(it.title)}</div>${it.sub ? `<div class="sub">${esc(it.sub)}</div>` : ''}</div>`;
+                el.addEventListener('mousedown', ev => { ev.preventDefault(); it.onPick(); });
+                box.appendChild(el);
+            });
+            box.style.display = items.length ? 'block' : 'none';
+        }
+
+        function defaultOptions(kind) {
+            return [
+                { icon: 'fa-location-crosshairs', title: 'موقعیت فعلی من', sub: 'استفاده از GPS', onPick: () => useMyLocation(kind) },
+                { icon: 'fa-hand-pointer', title: 'انتخاب از روی نقشه', sub: 'روی نقشه کلیک کنید', onPick: () => { 
+                    hideBox(kind);
+                    startPicking(kind); 
+                }}
+            ];
+        }
+        
+        function onPlacePicked(kind, p) {
+            const lat = parseFloat(p.lat), lng = parseFloat(p.lon), name = shortName(p);
+            if (kind === 'search') { setSearchPlace(lat, lng, name); return; }
+            setPoint(kind, lat, lng, name);
+            if (bothFilled()) handleRoutingAction();
+        }
+
+        const searchInputConfigs = [
+            { id: 'start', inputId: 'start-point' },
+            { id: 'dest', inputId: 'dest-point' },
+            { id: 'search', inputId: 'search-input' },
+            { id: 'h-start', inputId: 'h-start-point' },
+            { id: 'h-dest', inputId: 'h-dest-point' }
+        ];
+
+        searchInputConfigs.forEach(conf => {
+            const input = $(conf.inputId);
+            if (!input) return;
+            
+            input.addEventListener('focus', () => {
+                lastFocused = conf.id.replace('h-', '');
+                if (conf.id !== 'search' && !input.value.trim()) showBoxItems(conf.id, defaultOptions(conf.id));
+            });
+            
+            input.addEventListener('blur', () => setTimeout(() => hideBox(conf.id), 150));
+            
+            input.addEventListener('input', () => {
+                const coreKind = conf.id.replace('h-', '');
+                if (coreKind !== 'search') points[coreKind] = null;
+                else $('search-clear').classList.toggle('hidden', !input.value);
+                
+                const q = input.value.trim();
+                clearTimeout(debounceTimers[conf.id]);
+
+                if (!q) { 
+                    if (coreKind === 'search') hideBox(conf.id); 
+                    else showBoxItems(conf.id, defaultOptions(conf.id)); 
+                    return; 
+                }
+                if (q.length < 2) { hideBox(conf.id); return; }
+                
+                debounceTimers[conf.id] = setTimeout(async () => {
+                    showBoxItems(conf.id, [{ icon: 'fa-spinner fa-spin', title: 'در حال جستجو...', onPick: () => {} }]);
+                    try {
+                        const res = await searchPlaces(q);
+                        if (!res.length) {
+                            showBoxItems(conf.id, [{ icon: 'fa-circle-exclamation', title: 'نتیجه‌ای پیدا نشد', onPick: () => {} }]);
+                            return;
+                        }
+                        showBoxItems(conf.id, res.map(p => ({ icon: 'fa-location-dot', title: shortName(p), sub: p.display_name, onPick: () => onPlacePicked(conf.id, p) })));
+                    } catch (e) {
+                        showBoxItems(conf.id, [{ icon: 'fa-wifi', title: 'خطا در اتصال', onPick: () => {} }]);
+                    }
+                }, 450);   
+            });
+        });
+
+        function setSearchPlace(lat, lng, label) {
+            searchPlace = { lat, lng, label };
+            const sInp = $('search-input'); if(sInp) sInp.value = label;
+            $('search-clear').classList.remove('hidden');
+            hideBox('search');
+            
+            if (searchMarker) map.removeLayer(searchMarker);
+            searchMarker = L.marker([lat, lng], { icon: pinIcon('#ef4444', 'fa-location-dot') }).addTo(map)
+                .bindPopup(`<div style="min-width:170px"><div style="font-weight:700;margin-bottom:8px">${esc(label)}</div><button onclick="routeToSearched()" class="bg-blue-600 text-white text-xs px-3 py-1.5 rounded-lg w-full">مسیریابی به اینجا</button></div>`)
+                .openPopup();
+            panTo(lat, lng, Math.max(map.getZoom(), 15));
+        }
+        function clearSearch() {
+            if (searchMarker) { map.removeLayer(searchMarker); searchMarker = null; }
+            searchPlace = null; 
+            const sInp = $('search-input'); if(sInp) sInp.value = '';
+            $('search-clear').classList.add('hidden');
+            hideBox('search');
+        }
+        function routeToSearched() { map.closePopup(); openDirections(searchPlace); }
+
+        // ---------- Panels open / close ----------
+        // ---------- Panels open / close ----------
+        function toggleMainMenu() {
+            if (mainMenuOpen) closeMainMenu();
+            else openMainMenu();
+        }
+        
+        function openMainMenu() {
+            closeProfilePanel();
+            closeDirections();
+            closeHamsafarPanel();
+            closePermGroupsPanel();
+            
+            mainMenuOpen = true;
+            $('main-menu-panel').classList.remove('hidden');
+            $('main-menu-panel').classList.add('flex');
+
+            updateSidebarIcons();
+        }
+        
+        function closeMainMenu() {
+            mainMenuOpen = false;
+            $('main-menu-panel').classList.add('hidden');
+            $('main-menu-panel').classList.remove('flex');
+
+            updateSidebarIcons();
+        }
+
+        function openDirections(passedPlace = null) {
+            closeProfilePanel();
+            closeHamsafarPanel();
+            closePermGroupsPanel();
+            closeMainMenu();
+            
+            panelOpen = true;
+            $('dir-panel').classList.remove('hidden');
+            
+            let placeToUse = passedPlace || searchPlace;
+            if (placeToUse) setPoint('start', placeToUse.lat, placeToUse.lng, placeToUse.label, false);
+            clearSearch();
+            if (bothFilled()) handleRoutingAction();
+            else if (points.start && !points.dest) { const el = $('dest-point'); if(el) el.focus(); }
+            else { const el = $('start-point'); if(el) el.focus(); }
+            
+            updateSidebarIcons();
+        }
+        
+        function closeDirections() {
+            panelOpen = false;
+            $('dir-panel').classList.add('hidden');
+            clearRoutes(); stopPicking();
+        }
+
+        function openHamsafarPanel() {
+            if (!currentUser) { showToast('برای استفاده از قابلیت همسفر ابتدا وارد حساب شوید.', 'error'); openAuthModal('login'); return; }
+            closeProfilePanel();
+            closeDirections();
+            closePermGroupsPanel();
+            closeMainMenu();
+            
+            hamsafarOpen = true;
+            $('hamsafar-panel').classList.remove('hidden');
+            $('hamsafar-panel').classList.add('flex');
+            
+            profile = 'car';
+            if (bothFilled()) handleRoutingAction();
+            updateSidebarIcons();
+        }
+        
+        function closeHamsafarPanel() {
+            hamsafarOpen = false;
+            $('hamsafar-panel').classList.add('hidden');
+            $('hamsafar-panel').classList.remove('flex');
+            updateSidebarIcons();
+        }
+
+        async function openPermGroupsPanel(groupIdToOpen = null) {
+            if (!currentUser) { showToast('برای استفاده از گروه‌ها ابتدا وارد حساب شوید.', 'error'); openAuthModal('login'); return; }
+            closeProfilePanel();
+            closeDirections();
+            closeHamsafarPanel();
+            closeMainMenu();
+            
+            permGroupsOpen = true;
+            $('groups-panel').classList.remove('hidden');
+            $('groups-panel').classList.add('flex');
+            
+            const groups = await loadPermanentGroups();
+            
+            if (groupIdToOpen && groups) {
+                const targetGroup = groups.find(g => g.id === groupIdToOpen);
+                if (targetGroup) openPermChat(targetGroup.id, targetGroup.name, targetGroup.avatar);
+            }
+            updateSidebarIcons();
+        }
+        
+        function closePermGroupsPanel() {
+            permGroupsOpen = false;
+            activePermGroupId = null;
+            closePermGroupDetail(); 
+            $('groups-panel').classList.add('hidden');
+            $('groups-panel').classList.remove('flex');
+            updateSidebarIcons();
+        }
+
+        function openProfilePanel() {
+            if (!currentUser) return;
+            closeDirections();
+            closeHamsafarPanel();
+            closePermGroupsPanel();
+            closeMainMenu();
+            
+            profilePanelOpen = true;
+            $('profile-panel-avatar').src = currentUser.avatar || DEFAULT_AVATAR;
+            $('profile-panel-name').innerText = currentUser.name || 'کاربر';
+            $('profile-panel').classList.remove('hidden');
+            $('profile-menu').classList.add('hidden');
+            updateSidebarIcons();
+        }
+        
+        function closeProfilePanel() {
+            profilePanelOpen = false;
+            $('profile-panel').classList.add('hidden');
+            $('profile-menu').classList.add('hidden');
+            updateSidebarIcons();
+        }
+        
+        function openEditProfilePanel() {
+            $('profile-menu').classList.add('hidden');
+            $('profile-panel').classList.add('hidden');
+            $('edit-profile-panel').classList.remove('hidden');
+            $('edit-avatar-preview').src = currentUser.avatar || DEFAULT_AVATAR;
+            tempAvatar = currentUser.avatar; 
+        }
+        function closeEditProfilePanel() {
+            $('edit-profile-panel').classList.add('hidden');
+            $('profile-panel').classList.remove('hidden');
+        }
+        
+        function toggleProfileMenu(e) { e.stopPropagation(); $('profile-menu').classList.toggle('hidden'); }
+        
+        function toggleGroupMenu(menuId, e) { 
+            e.stopPropagation(); 
+            const menu = $(menuId);
+            if (menu) menu.classList.toggle('hidden'); 
+        }
+        
+        document.addEventListener('click', function(e) {
+            if ($('profile-menu') && !$('profile-menu').classList.contains('hidden') && !e.target.closest('#profile-menu') && !e.target.closest('button[onclick="toggleProfileMenu(event)"]')) {
+                $('profile-menu').classList.add('hidden');
+            }
+            ['chat-menu', 'info-menu'].forEach(id => {
+                const m = $(id);
+                if (m && !m.classList.contains('hidden') && !e.target.closest('.relative')) {
+                    m.classList.add('hidden');
+                }
+            });
+        });
+        
+        function switchProfileTab(tab, btn) {
+            document.querySelectorAll('.profile-tab-btn').forEach(b => b.className = 'profile-tab-btn pb-2.5 text-sm font-medium text-gray-500 hover:text-gray-800 transition');
+            btn.className = 'profile-tab-btn pb-2.5 text-sm font-bold text-blue-600 border-b-2 border-blue-600';
+            document.querySelectorAll('.profile-tab-content').forEach(c => c.classList.add('hidden'));
+            $('tab-content-' + tab).classList.remove('hidden');
+        }
+
+        // ---------- Pick from map ----------
+        function startPicking(kind) {
+            pickMode = kind;
+            $('map').classList.add('picking');
+            hideBox(kind);
+            showToast('لطفاً از روی نقشه انتخاب کنید (Esc برای لغو)', 'info', 5000);
+        }
+        function stopPicking() { pickMode = null; $('map').classList.remove('picking'); }
+        document.addEventListener('keydown', e => { if (e.key === 'Escape' && pickMode) stopPicking(); });
+
+        map.on('click', async function (e) {
+            if (!pickMode) return;
+            const mode = pickMode;
+            stopPicking();
+            
+            if (mode === 'station-origin') { pendingStationData.origin = e.latlng; openStationStep1(); return; }
+            if (mode === 'station-dest') { pendingStationData.dest = e.latlng; openStationStep3(); return; }
+            
+            if (mode.startsWith('save-')) {
+                const key = mode.slice(5);
+                saved[key] = { lat: e.latlng.lat, lng: e.latlng.lng, label: await reverseGeocode(e.latlng.lat, e.latlng.lng) };
+                persistSaved(); renderSaved();
+                showToast('مکان با موفقیت ذخیره شد.', 'success');
+                return;
+            }
+            
+            const coreKind = mode.replace('h-', '');
+            if(inputsMapping[coreKind]) {
+                inputsMapping[coreKind].forEach(id => { const el = $(id); if(el) el.value = '...'; });
+            }
+            
+            const name = await reverseGeocode(e.latlng.lat, e.latlng.lng);
+            setPoint(mode, e.latlng.lat, e.latlng.lng, name, false);
+            if (bothFilled()) handleRoutingAction();
+        });
+
+        function swapPoints() {
+            const a = points.start, b = points.dest;
+            const sInp1 = $('start-point'), sInp2 = $('h-start-point');
+            const dInp1 = $('dest-point'), dInp2 = $('h-dest-point');
+            
+            const aLabel = sInp1 ? sInp1.value : '';
+            const bLabel = dInp1 ? dInp1.value : '';
+            
+            ['start', 'dest'].forEach(k => { if (pointMarkers[k]) { map.removeLayer(pointMarkers[k]); pointMarkers[k] = null; } points[k] = null; });
+            
+            if(sInp1) sInp1.value = bLabel; if(sInp2) sInp2.value = bLabel;
+            if(dInp1) dInp1.value = aLabel; if(dInp2) dInp2.value = aLabel;
+            
+            if (b) setPoint('start', b.lat, b.lng, b.label, false);
+            if (a) setPoint('dest', a.lat, a.lng, a.label, false);
+            if (bothFilled()) handleRoutingAction();
+        }
+        function bothFilled() { 
+            return points.start !== null && points.dest !== null;
+        }
+
+        // ---------- Saved places ----------
+        function persistSaved() { try { localStorage.setItem('mapSaved', JSON.stringify(saved)); } catch (e) {} }
+        function loadSaved() { try { const s = JSON.parse(localStorage.getItem('mapSaved') || 'null'); if (s) { saved.home = s.home || null; saved.work = s.work || null; } } catch (e) {} }
+        function renderSaved() {
+            if (!$('saved-places')) return;
+            const hSet = !!saved.home, wSet = !!saved.work;
+            $('saved-places').innerHTML = `
+                <div class="flex items-center gap-2 w-full text-xs font-medium text-gray-700">
+                    <button onclick="${hSet ? "savedClick('home')" : "editSaved('home')"}" class="flex-1 flex items-center justify-center gap-2 py-2 px-3 border border-gray-200 rounded-full hover:bg-gray-50 transition">
+                        خانه <i class="fa-solid fa-house ${hSet ? 'text-blue-500' : 'text-blue-300'}"></i>
+                    </button>
+                    <button onclick="${wSet ? "savedClick('work')" : "editSaved('work')"}" class="flex-1 flex items-center justify-center gap-2 py-2 px-3 border border-gray-200 rounded-full hover:bg-gray-50 transition">
+                        محل کار <i class="fa-solid fa-briefcase ${wSet ? 'text-orange-500' : 'text-orange-300'}"></i>
+                    </button>
+                    <button onclick="showSavedPlacesView()" class="flex-1 flex items-center justify-center gap-1 py-2 px-3 border border-gray-200 rounded-full hover:bg-gray-50 transition text-gray-500">
+                        <span class="text-[10px]">...</span> سایر ذخیره‌ها
+                    </button>
+                </div>`;
+        }
+        function showSavedPlacesView() { $('route-selection-view').classList.add('hidden'); $('saved-places-view').classList.remove('hidden'); $('saved-places-view').classList.add('flex'); renderExtendedSavedList(); }
+        function hideSavedPlacesView() { $('saved-places-view').classList.add('hidden'); $('saved-places-view').classList.remove('flex'); $('route-selection-view').classList.remove('hidden'); }
+        
+        function renderExtendedSavedList() {
+            if (!$('extended-saved-list')) return;
+            let html = '';
+            const homeLabel = saved.home ? 'خانه' : 'اضافه کردن خانه';
+            const homeIconColor = saved.home ? 'text-blue-500' : 'text-blue-400';
+            html += `
+            <div class="flex items-center justify-between p-4 border-b border-gray-50 hover:bg-gray-50 cursor-pointer" onclick="${saved.home ? "savedClick('home')" : "editSaved('home')"}">
+                <div class="flex items-center gap-3">
+                    <i class="fa-solid fa-house ${homeIconColor}"></i>
+                    <span class="text-sm font-medium ${saved.home ? 'text-blue-600' : 'text-blue-500'}">${homeLabel}</span>
+                </div>
+                <button class="text-gray-400 hover:text-gray-600"><i class="fa-solid ${saved.home ? 'fa-ellipsis-vertical' : 'fa-plus'}"></i></button>
+            </div>`;
+            
+            const workLabel = saved.work ? 'محل کار' : 'اضافه کردن محل کار';
+            const workIconColor = saved.work ? 'text-orange-500' : 'text-orange-400';
+            html += `
+            <div class="flex items-center justify-between p-4 border-b border-gray-50 hover:bg-gray-50 cursor-pointer" onclick="${saved.work ? "savedClick('work')" : "editSaved('work')"}">
+                <div class="flex items-center gap-3">
+                    <i class="fa-solid fa-briefcase ${workIconColor}"></i>
+                    <span class="text-sm font-medium ${saved.work ? 'text-orange-600' : 'text-orange-500'}">${workLabel}</span>
+                </div>
+                <button class="text-gray-400 hover:text-gray-600"><i class="fa-solid ${saved.work ? 'fa-ellipsis-vertical' : 'fa-plus'}"></i></button>
+            </div>`;
+
+            const customPlaces = [
+                { title: 'ایستگاه قائمشهر ساری', icon: 'fa-star', color: 'text-yellow-400' },
+                { title: 'My university', icon: 'fa-plus', color: 'text-emerald-400' }
+            ];
+
+            customPlaces.forEach(d => {
+                html += `
+                <div class="flex items-center justify-between p-4 border-b border-gray-50 hover:bg-gray-50 cursor-pointer">
+                    <div class="flex items-center gap-3"><i class="fa-solid ${d.icon} ${d.color}"></i><span class="text-sm text-gray-700 font-medium">${d.title}</span></div>
+                    <button class="text-gray-400 hover:text-gray-600"><i class="fa-solid fa-ellipsis-vertical"></i></button>
+                </div>`;
+            });
+            $('extended-saved-list').innerHTML = html;
+        }
+
+        function editSaved(key) { if (!currentUser) { showToast('ابتدا وارد حساب شوید.', 'error'); openAuthModal('login'); return; } startPicking('save-' + key); }
+        function savedClick(key) {
+            const s = saved[key];
+            if (!s) return editSaved(key);
+            const kind = !points.start ? 'start' : !points.dest ? 'dest' : (lastFocused || 'dest');
+            setPoint(kind, s.lat, s.lng, s.label, false);
+            if (bothFilled()) handleRoutingAction(); else panTo(s.lat, s.lng, 15);
+            hideSavedPlacesView();
+        }
+
+        // ---------- Station Wizard ----------
+        function enableAddStationMode() { 
+            if (!currentUser) { showToast('برای افزودن ایستگاه ابتدا باید وارد حساب کاربری شوید.', 'error'); openAuthModal('login'); return; }
+            pendingStationData = {}; startPicking('station-origin'); 
+        }
+        function openStationStep1() {
+            $('station-step1').classList.remove('hidden'); $('station-step2').classList.add('hidden'); $('station-step3').classList.add('hidden');
+            const checkedRadio = document.querySelector('input[name="vehicle-type"]:checked'); if(checkedRadio) checkedRadio.checked = false;
+            $('vehicle-other-input').value = ''; $('vehicle-other-input').classList.add('hidden');
+            $('station-wizard-modal').style.display = 'flex';
+        }
+        function toggleOtherVehicleInput() {
+            const val = document.querySelector('input[name="vehicle-type"]:checked')?.value;
+            if (val === 'other') { $('vehicle-other-input').classList.remove('hidden'); $('vehicle-other-input').focus(); } else { $('vehicle-other-input').classList.add('hidden'); }
+        }
+        function goToStationStep2() {
+            const val = document.querySelector('input[name="vehicle-type"]:checked')?.value;
+            if (!val) { showToast('لطفاً نوع وسیله نقلیه را انتخاب کنید.', 'error'); return; }
+            if (val === 'other' && !$('vehicle-other-input').value.trim()) { showToast('لطفاً نوع وسیله نقلیه را تایپ کنید.', 'error'); return; }
+            pendingStationData.vehicleType = val === 'other' ? $('vehicle-other-input').value.trim() : val;
+            $('station-step1').classList.add('hidden'); $('station-step2').classList.remove('hidden');
+        }
+        function pickStationDest() { $('station-wizard-modal').style.display = 'none'; startPicking('station-dest'); }
+        function openStationStep3() {
+            $('station-step1').classList.add('hidden'); $('station-step2').classList.add('hidden'); $('station-step3').classList.remove('hidden');
+            $('station-fare').value = ''; for(let i=1; i<=3; i++) { $(`time-start-${i}`).value = ''; $(`time-end-${i}`).value = ''; }
+            $('station-wizard-modal').style.display = 'flex';
+        }
+        async function confirmAddStationFinal() {
+            const fare = $('station-fare').value.trim();
+            if (!fare) { showToast('لطفاً کرایه حدودی را تعیین کنید.', 'error'); return; }
+            pendingStationData.fare = fare;
+            const times = [];
+            for(let i=1; i<=3; i++) {
+                const start = $(`time-start-${i}`).value, end = $(`time-end-${i}`).value;
+                if (start || end) { times.push(`از ${start ? esc(start) : '...'} تا ${end ? esc(end) : '...'}`); }
+            }
+            const nameMap = { 'yellow-taxi': 'تاکسی زرد', 'personal-taxi': 'تاکسی شخصی', 'bus': 'اتوبوس', 'van': 'ون / مینی‌بوس' };
+            const vName = nameMap[pendingStationData.vehicleType] || pendingStationData.vehicleType;
+            
+            let popupHtml = `<div class="text-right p-1"><b class="text-emerald-700 text-sm mb-1 block">ایستگاه ${esc(vName)}</b>`;
+            popupHtml += `<div class="text-xs text-gray-700 mb-2 font-medium">کرایه حدودی: ${fa(fare)} تومان</div>`;
+            if (times.length > 0) { popupHtml += `<div class="text-[10px] text-gray-500 mb-1 border-t pt-1">ساعات حضور:</div><ul class="text-[10px] text-gray-600 space-y-0.5">` + times.map(t => `<li>- ${t}</li>`).join('') + `</ul>`; }
+            popupHtml += `</div>`;
+            
+            const originMarker = L.marker(pendingStationData.origin, { icon: pinIcon('#059669', 'fa-map-pin') }).addTo(map).bindPopup(popupHtml);
+            originMarker.on('popupopen', async () => {
+                activeStationExtras.clearLayers();
+                const destIcon = L.divIcon({ className: 'pin', html: `<div style="background:#ef4444;width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:white;box-shadow:0 2px 4px rgba(0,0,0,.3);"><i class="fa-solid fa-flag-checkered text-[10px]"></i></div>`, iconSize: [24, 24] });
+                L.marker(pendingStationData.dest, {icon: destIcon}).bindPopup(`مقصد تقریبی خط ${esc(vName)}`).addTo(activeStationExtras);
+                try {
+                    const s = pendingStationData.origin, d = pendingStationData.dest;
+                    const res = await fetch(`https://router.project-osrm.org/route/v1/driving/${s.lng},${s.lat};${d.lng},${d.lat}?overview=full&geometries=geojson`);
+                    const data = await res.json();
+                    if (data.code === 'Ok' && data.routes.length > 0) {
+                        const coords = data.routes[0].geometry.coordinates.map(c => [c[1], c[0]]);
+                        L.polyline(coords, { color: '#059669', weight: 4, dashArray: '6, 6' }).addTo(activeStationExtras);
+                    } else { L.polyline([s, d], { color: '#059669', weight: 4, dashArray: '6, 6' }).addTo(activeStationExtras); }
+                } catch (e) { L.polyline([pendingStationData.origin, pendingStationData.dest], { color: '#059669', weight: 4, dashArray: '6, 6' }).addTo(activeStationExtras); }
+            });
+            originMarker.on('popupclose', () => { activeStationExtras.clearLayers(); });
+            showToast('ایستگاه جدید با موفقیت ثبت شد.', 'success');
+            closeStationWizard();
+        }
+        function closeStationWizard() { $('station-wizard-modal').style.display = 'none'; pendingStationData = {}; }
+
+        // ---------- GPS ----------
+        function getGPS() {
+            return new Promise((resolve, reject) => {
+                if (!navigator.geolocation) return reject(new Error('no geolocation'));
+                navigator.geolocation.getCurrentPosition(p => resolve({ lat: p.coords.latitude, lng: p.coords.longitude }), reject, { enableHighAccuracy: true, timeout: 10000 });
+            });
+        }
+        async function useMyLocation(kind) {
+            hideBox(kind);
+            showToast('در حال یافتن موقعیت مکانی شما...', 'info', 2000);
+            try {
+                const loc = await getGPS();
+                const name = await reverseGeocode(loc.lat, loc.lng);
+                setPoint(kind, loc.lat, loc.lng, name);
+            } catch (e) { 
+                console.error("GPS Error:", e);
+                showToast('خطا! لطفا دسترسی به موقعیت مکانی (GPS) را مجاز کنید.', 'error', 5000); 
+            }
+        }
+        async function locateMe() {
+            try {
+                const loc = await getGPS();
+                panTo(loc.lat, loc.lng, 15);
+                L.circleMarker([loc.lat, loc.lng], { radius: 8, color: '#fff', weight: 3, fillColor: '#2563eb', fillOpacity: 1 }).addTo(map).bindPopup('موقعیت شما');
+            } catch (e) { showToast('لطفا دسترسی به موقعیت مکانی (GPS) را مجاز کنید.', 'error'); }
+        }
+
+        // ---------- Transport profile + route type ----------
+        function carLike() { return profile === 'car' || profile === 'moto'; }
+        
+        const TAB_ON = 'profile-tab flex flex-col items-center gap-1 py-2 rounded-xl border text-xs border-blue-600 text-blue-600 bg-blue-50 font-bold';
+        const TAB_OFF = 'profile-tab flex flex-col items-center gap-1 py-2 rounded-xl border text-xs border-gray-200 text-gray-600 hover:bg-gray-50';
+        const SEG_ON = 'py-2 rounded-lg text-sm font-bold bg-blue-600 text-white shadow transition';
+        const SEG_OFF = 'py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100 transition';
+
+        function updateControls() {
+            document.querySelectorAll('.profile-tab').forEach(b => { b.className = b.dataset.p === profile ? TAB_ON : TAB_OFF; });
+            if($('mode-time')) $('mode-time').className = routeMode === 'time' ? SEG_ON : SEG_OFF;
+            if($('mode-cost')) $('mode-cost').className = routeMode === 'cost' ? SEG_ON : SEG_OFF;
+        }
+        function setProfile(p) {
+            if (p === 'transit') { showToast('مسیریابی با حمل‌ونقل همگانی هنوز پشتیبانی نمی‌شود.', 'info'); return; }
+            profile = p; updateControls(); hideResultPanels();
+            if (bothFilled()) handleRoutingAction(); else if(panelOpen) $('road-panel').innerHTML = `<div class="text-sm text-gray-500">${ROAD_HINT}</div>`;
+        }
+        function setRouteMode(m) {
+            routeMode = m; 
+            updateControls(); 
+            selectedRoute = 0;
+            if (bothFilled() && rawRoutes.length > 0) {
+                drawRoutes(true);
+                renderRoadPanel();
+            }
+        }
+        function hideResultPanels() { if($('road-panel')) $('road-panel').classList.add('hidden'); }
+
+        // ---------- UPGRADED: SCHEDULE TOGGLE ----------
+        function toggleScheduleMode(mode) {
+            travelScheduleMode = mode;
+            const btnNow = $('btn-time-now');
+            const btnLater = $('btn-time-later');
+            const picker = $('schedule-picker');
+            
+            if (mode === 'now') {
+                btnNow.className = 'flex-1 text-[11px] font-bold py-1.5 rounded-md bg-white shadow text-blue-600 transition';
+                btnLater.className = 'flex-1 text-[11px] font-medium py-1.5 rounded-md text-gray-500 hover:text-gray-700 transition';
+                picker.classList.remove('flex');
+                picker.classList.add('hidden');
+                $('btn-create-planned').classList.add('hidden');
+            } else {
+                btnLater.className = 'flex-1 text-[11px] font-bold py-1.5 rounded-md bg-white shadow text-blue-600 transition';
+                btnNow.className = 'flex-1 text-[11px] font-medium py-1.5 rounded-md text-gray-500 hover:text-gray-700 transition';
+                picker.classList.remove('hidden');
+                picker.classList.add('flex');
+                $('btn-create-planned').classList.remove('hidden');
+            }
+            
+            if (bothFilled()) handleRoutingAction();
+        }
+
+        // ---------- LIVE Polling Methods ----------
+        function startTravelerPolling() {
+            if (activeTravelersInterval) clearInterval(activeTravelersInterval);
+            activeTravelersInterval = setInterval(async () => {
+                if (!currentUser) return;
+                
+                try {
+                    const notifRes = await fetch(`${API_BASE}/notifications/${currentUser.id}`);
+                    const notifData = await notifRes.json();
+                    if (notifData.notifications) {
+                        notifData.notifications.forEach(n => showToast(n.message, 'info', 5000));
+                    }
+                } catch(e) {}
+                
+                // ALWAYS POLL PERMANENT GROUPS SO NOTIFICATIONS/REDIRECTS WORK IN BACKGROUND
+                await loadPermanentGroups();
+                if (permGroupsOpen && activePermGroupId) {
+                    await loadPermChatMessages();
+                }
+
+                if (hamsafarOpen) {
+                    await loadAcceptedRequests();
+                    await pollIncomingRequests();
+                    
+                    if (bothFilled()) {
+                        await publishTraveler(); 
+                        if (currentHTab === 'nearby') await loadTravelersOnMap(false); 
+                    }
+                    if (currentHTab === 'group') await loadChatMessages();
+                }
+            }, 3000); 
+        }
+
+        function stopTravelerPolling() {
+            if (activeTravelersInterval) clearInterval(activeTravelersInterval);
+            activeTravelersInterval = null;
+            if (currentUser) fetch(`${API_BASE}/travelers/${currentUser.id}`, { method: 'DELETE' }).catch(()=>{});
+        }
+
+        // ---------- Routing & Live API Calls ----------
+        async function handleRoutingAction() {
+            if (!bothFilled()) { showToast('لطفاً مبدا و مقصد را وارد کنید.', 'error'); return; }
+            if (hamsafarOpen && !currentUser) { openAuthModal('login'); return; }
+            
+            if(panelOpen) {
+                hideResultPanels();
+                $('road-panel').classList.remove('hidden');
+                $('road-panel').innerHTML = '<div class="text-sm text-gray-500"><i class="fa-solid fa-spinner fa-spin"></i> در حال محاسبه مسیر...</div>';
+            }
+
+            try { await fetchRoutes(); }
+            catch (e) {
+                clearRoutes();
+                if(panelOpen) $('road-panel').innerHTML = '<div class="text-sm text-red-600">مسیری پیدا نشد.</div>';
+                return;
+            }
+            selectedRoute = 0;
+            drawRoutes(true);
+
+            if (hamsafarOpen) {
+                await publishTraveler();
+                if(currentHTab === 'nearby') loadTravelersOnMap(true); 
+                startTravelerPolling(); 
+            } else {
+                renderRoadPanel();
+            }
+        }
+
+        function osrmBase() {
+            if (profile === 'foot') return 'https://routing.openstreetmap.de/routed-foot/route/v1/driving/';
+            if (profile === 'bike') return 'https://routing.openstreetmap.de/routed-bike/route/v1/driving/';
+            return 'https://router.project-osrm.org/route/v1/driving/';   
+        }
+
+        async function fetchRoutes() {
+            const s = points.start, d = points.dest;
+            const key = `${profile}|${s.lat},${s.lng}|${d.lat},${d.lng}`;
+            if (key === rawKey && rawRoutes.length) return;
+            
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 8000);
+            
+            try {
+                const r = await fetch(`${osrmBase()}${s.lng},${s.lat};${d.lng},${d.lat}?overview=full&geometries=geojson&alternatives=true&steps=true`, { signal: controller.signal });
+                clearTimeout(timeoutId);
+                const data = await r.json();
+                if (data.code !== 'Ok' || !data.routes.length) throw new Error('no route');
+                rawRoutes = data.routes; rawKey = key;
+            } catch (err) {
+                clearTimeout(timeoutId);
+                throw err;
+            }
+        }
+
+        function sortedRoutes() {
+            const r = [...rawRoutes];
+            if (routeMode === 'cost' && !hamsafarOpen) {
+                r.sort((a, b) => a.distance - b.distance);
+            } else {
+                r.sort((a, b) => a.duration - b.duration);
+            }
+            return r;
+        }
+        function fmtDuration(sec) {
+            const m = Math.max(1, Math.round(sec / 60));
+            if (m < 60) return fa(m) + ' دقیقه';
+            return fa(Math.floor(m / 60)) + ' ساعت' + (m % 60 ? ' و ' + fa(m % 60) + ' دقیقه' : '');
+        }
+        function fmtCost(km) { 
+            const baseCost = 5000;
+            const perKm = profile === 'moto' ? 800 : 1500;
+            return fa(Math.max(baseCost, Math.round((baseCost + (km * perKm)) / 500) * 500)) + ' تومان';
+        }
+
+        function drawRoutes(fit) {
+            routeLayers.forEach(l => map.removeLayer(l)); routeLayers = [];
+            const rs = sortedRoutes();
+            const idxs = hamsafarOpen ? [0] : rs.map((_, i) => i).filter(i => i !== selectedRoute).concat(selectedRoute);
+            idxs.forEach(i => {
+                const sel = i === selectedRoute;
+                const coords = rs[i].geometry.coordinates.map(c => [c[1], c[0]]);
+                const line = L.polyline(coords, sel ? { color: '#2563eb', weight: 7, opacity: .95 } : { color: '#64748b', weight: 5, dashArray: '6, 8', opacity: .8 }).addTo(map);
+                if (!hamsafarOpen) line.on('click', () => selectRoute(i));
+                routeLayers.push(line);
+            });
+            if (fit && routeLayers.length) fitTo(L.featureGroup(routeLayers).getBounds());
+        }
+        function selectRoute(i) { selectedRoute = i; drawRoutes(false); renderRoadPanel(); }
+        function clearRoutes() { routeLayers.forEach(l => map.removeLayer(l)); routeLayers = []; }
+
+        function showRouteSteps(index) {
+            const rt = sortedRoutes()[index];
+            const steps = rt.legs[0].steps || [];
+            $('steps-route-title').innerText = index === 0 ? 'بهترین مسیر' : `مسیر جایگزین ${fa(index)}`;
+            $('steps-route-dist').innerText = fa((rt.distance / 1000).toFixed(1)) + ' کیلومتر';
+            $('steps-route-time').innerText = fmtDuration(rt.duration);
+            $('steps-route-icon').className = `fa-solid ${profile === 'foot' ? 'fa-person-walking' : 'fa-car'} text-gray-500 text-lg`;
+            $('route-selection-view').classList.add('hidden');
+            $('route-steps-view').classList.remove('hidden');
+            $('route-steps-view').classList.add('flex');
+            
+            let html = '';
+            steps.forEach(st => {
+                const tr = translateManeuver(st);
+                html += `
+                <div class="flex gap-4 py-4 border-b border-gray-100 last:border-0 items-start hover:bg-gray-50 transition">
+                    <div class="mt-0.5 text-gray-600 w-6 flex justify-center text-lg"><i class="fa-solid ${tr.icon}"></i></div>
+                    <div class="flex-1">
+                        <div class="text-[13px] text-gray-800 font-bold mb-1 pl-2">${tr.text}</div>
+                        ${st.maneuver.type !== 'arrive' ? `<div class="text-[11px] text-gray-400">${st.distance<1000 ? fa(Math.round(st.distance))+' متر' : fa((st.distance/1000).toFixed(1))+' کیلومتر'}</div>` : ''}
+                    </div>
+                </div>`;
+            });
+            $('steps-list').innerHTML = html;
+        }
+
+        function translateManeuver(step) {
+            const m = step.maneuver, type = m.type, dir = m.modifier, name = step.name ? 'وارد ' + esc(step.name) + ' شوید' : 'مسیر را ادامه دهید';
+            if (type === 'depart') return { icon: 'fa-location-dot', text: 'در جهت مسیر قرار بگیرید' };
+            if (type === 'arrive') return { icon: 'fa-flag-checkered text-red-500', text: 'به مقصد رسیدید' };
+            if (type === 'roundabout') return { icon: 'fa-arrows-spin', text: 'وارد میدان شوید' };
+            if (dir && dir.includes('right')) return { icon: 'fa-arrow-turn-right', text: 'به راست بپیچید و ' + name };
+            if (dir && dir.includes('left')) return { icon: 'fa-arrow-turn-left', text: 'به چپ بپیچید و ' + name };
+            return { icon: 'fa-arrow-up', text: step.name ? 'در ' + esc(step.name) + ' ادامه دهید' : 'مستقیم ادامه دهید' };
+        }
+
+        function hideRouteSteps() {
+            $('route-steps-view').classList.add('hidden');
+            $('route-steps-view').classList.remove('flex');
+            $('route-selection-view').classList.remove('hidden');
+        }
+
+        function renderRoadPanel() {
+            if(!$('road-panel')) return;
+            const rs = sortedRoutes(), showCost = carLike();
+            const bestLabel = routeMode === 'cost' ? 'ارزان‌ترین مسیر' : 'سریع‌ترین مسیر';
+            
+            $('road-panel').innerHTML = rs.map((rt, i) => {
+                const km = rt.distance / 1000, sel = i === selectedRoute;
+                const title = i === 0 ? bestLabel : `مسیر جایگزین ${fa(i)}`;
+                const costText = showCost ? fmtCost(km) : '';
+                return `<div data-i="${i}" class="route-card ${sel ? 'bg-blue-50 border-blue-300' : 'bg-gray-50 border-gray-200'} border p-3 rounded-xl cursor-pointer">
+                    <div class="text-xs ${sel ? 'text-blue-700' : 'text-gray-500'}">${title}</div>
+                    <div class="font-bold text-lg mt-0.5">${routeMode === 'cost' && showCost ? costText : fmtDuration(rt.duration)}</div>
+                    <div class="text-xs ${sel ? 'text-blue-700' : 'text-gray-500'} mt-1">مسافت: ${fa(km.toFixed(1))} کیلومتر</div>
+                    ${sel ? `<div class="mt-3 pt-3 border-t border-gray-100 flex justify-end"><button onclick="event.stopPropagation(); showRouteSteps(${i})" class="text-xs font-bold text-gray-800"><i class="fa-solid fa-arrow-left"></i> گام‌های مسیر</button></div>` : ''}
+                </div>`;
+            }).join('');
+            $('road-panel').querySelectorAll('.route-card').forEach(el => el.addEventListener('click', () => selectRoute(+el.dataset.i)));
+        }
+
+        // ---------- HAMSAFAR TABS & LOGIC ----------
+        function switchHTab(tab) {
+            currentHTab = tab;
+            ['nearby', 'accepted', 'group'].forEach(t => {
+                const btn = $(`htab-${t}`);
+                if(btn) btn.className = t === tab ? 'py-2 rounded-lg text-[11px] font-bold bg-blue-600 text-white shadow transition' : 'py-2 rounded-lg text-[11px] font-medium text-gray-600 hover:bg-gray-100 transition';
+                const content = $(`hcontent-${t}`);
+                if(content) {
+                    if (t === tab) content.classList.remove('hidden');
+                    else content.classList.add('hidden');
+                }
+            });
+            if (tab === 'nearby' && bothFilled()) loadTravelersOnMap(true);
+            if (tab === 'accepted') { renderPlannedRequests(); loadAcceptedRequests(); }
+            if (tab === 'group') loadChatMessages();
+        }
+
+        // ---------- PLANNED (SCHEDULED) REQUESTS ----------
+        // Stored in this browser (localStorage) per user, since the server has no endpoint for them.
+        const DATE_LABELS = { today: 'امروز', tomorrow: 'فردا', day_after: 'پس‌فردا' };
+        function plannedKey() { return currentUser ? `plannedRequests_${currentUser.id}` : null; }
+        function getPlanned() {
+            const k = plannedKey(); if (!k) return [];
+            try { const a = JSON.parse(localStorage.getItem(k) || '[]'); return Array.isArray(a) ? a : []; } catch (e) { return []; }
+        }
+        function setPlanned(arr) { const k = plannedKey(); if (!k) return; try { localStorage.setItem(k, JSON.stringify(arr)); } catch (e) {} }
+
+        function createPlannedRequest() {
+            if (!currentUser) { showToast('برای ایجاد درخواست ابتدا وارد حساب خود شوید.', 'error'); return; }
+            if (!bothFilled()) { showToast('ابتدا مبدا و مقصد را مشخص کنید.', 'error'); return; }
+            const dateVal = $('schedule-date').value;
+            const timeVal = $('schedule-time').value;
+            if (!timeVal) { showToast('ساعت حرکت را انتخاب کنید.', 'error'); return; }
+            if (dateVal === 'today') {
+                const [h, m] = timeVal.split(':').map(Number);
+                const now = new Date();
+                if (h * 60 + m < now.getHours() * 60 + now.getMinutes()) { showToast('این ساعت گذشته است؛ زمان دیگری انتخاب کنید.', 'error'); return; }
+            }
+            const list = getPlanned();
+            list.unshift({
+                id: 'pl_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
+                date: dateVal, time: timeVal,
+                startLabel: points.start.label || 'مبدا', destLabel: points.dest.label || 'مقصد',
+                createdAt: Date.now()
+            });
+            setPlanned(list);
+            showToast('درخواست شما ایجاد شد.', 'success');
+            if (currentHTab !== 'accepted') switchHTab('accepted'); else renderPlannedRequests();
+            const c = $('hcontent-accepted'); if (c) c.scrollTop = 0;
+        }
+
+        function renderPlannedRequests() {
+            const box = $('planned-requests-container'), listEl = $('planned-requests-list');
+            if (!box || !listEl) return;
+            const list = getPlanned();
+            if (!list.length) { box.classList.add('hidden'); box.classList.remove('flex'); listEl.innerHTML = ''; updateAcceptedRequestsVisibility(true); return; }
+            box.classList.remove('hidden'); box.classList.add('flex');
+            listEl.innerHTML = list.map(r => `
+                <div class="border border-gray-200 rounded-lg p-2.5 bg-gray-50 text-xs">
+                    <div class="flex items-center justify-between mb-1.5">
+                        <span class="font-bold text-gray-800"><i class="fa-regular fa-clock ml-1 text-emerald-600"></i>${esc(DATE_LABELS[r.date] || r.date)}، ساعت <span dir="ltr">${esc(r.time.replace(/\d/g, d => '۰۱۲۳۴۵۶۷۸۹'[d]))}</span></span>
+                        <span class="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">در انتظار همسفر</span>
+                    </div>
+                    <div class="text-gray-600 leading-5"><i class="fa-solid fa-circle text-[7px] text-blue-500 ml-1"></i>${esc(r.startLabel)}</div>
+                    <div class="text-gray-600 leading-5"><i class="fa-solid fa-location-dot text-[9px] text-red-500 ml-1"></i>${esc(r.destLabel)}</div>
+                    <button onclick="cancelPlannedRequest('${esc(r.id)}')" class="mt-2 w-full bg-white border border-red-200 text-red-600 hover:bg-red-50 py-1.5 rounded-lg transition font-medium"><i class="fa-solid fa-xmark ml-1"></i> لغو درخواست</button>
+                </div>`).join('');
+            updateAcceptedRequestsVisibility(true);
+        }
+
+        function cancelPlannedRequest(id) {
+            setPlanned(getPlanned().filter(r => r.id !== id));
+            renderPlannedRequests();
+            showToast('درخواست لغو شد.', 'info');
+        }
+
+        // UPGRADED: Sending travel data including schedule information
+        async function publishTraveler() {
+            try {
+                const mode = travelScheduleMode;
+                const date = $('schedule-date') ? $('schedule-date').value : '';
+                const time = $('schedule-time') ? $('schedule-time').value : '';
+                
+                await fetch(`${API_BASE}/travelers`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        user_id: currentUser.id, name: currentUser.name, avatar: currentUser.avatar, 
+                        lat: points.start.lat, lng: points.start.lng, dest_name: points.dest.label,
+                        travel_mode: mode, travel_date: date, travel_time: time
+                    })
+                });
+            } catch (e) {}
+        }
+
+        // UPGRADED: Fetching travelers matched by schedule
+        async function loadTravelersOnMap(forceUI = true) {
+            try {
+                const mode = travelScheduleMode;
+                const date = $('schedule-date') ? $('schedule-date').value : '';
+                
+                const res = await fetch(`${API_BASE}/travelers?exclude_id=${currentUser.id}&travel_mode=${mode}&travel_date=${date}`);
+                const liveTravelers = await res.json();
+                
+                if (forceUI) $('person-mode-desc').innerHTML = liveTravelers.length === 0 ? 'هنوز همسفری با شرایط مشابه شما پیدا نشده است.' : 'همسفران پیدا شده با مسیر و زمان مشابه:';
+
+                clearPersonMarkers();
+                const list = $('travelers-list');
+                list.innerHTML = '';
+                
+                liveTravelers.forEach(t => {
+                    let iconClass = 'fa-user';
+                    if(t.member_count === 2) iconClass = 'fa-user-group';
+                    if(t.member_count === 3) iconClass = 'fa-users';
+
+                    const marker = L.marker([t.lat, t.lng], {
+                        icon: L.divIcon({ className: 'pin', html: `<div style="background:#f97316;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:white;border:2px solid white;box-shadow:0 4px 6px rgba(0,0,0,.3);"><i class="fa-solid ${iconClass} text-xs"></i></div>`, iconSize: [32, 32] })
+                    }).addTo(map);
+                    marker.on('click', () => {
+                        renderSelectedTravelerPanel(t);
+                        panTo(t.lat, t.lng, 16);
+                    });
+                    personMarkers.push(marker);
+
+                    let displayAvatar = t.members[0].avatar;
+                    let displayName = t.members[0].name;
+
+                    if (t.member_count === 2) {
+                        displayAvatar = ICON_2_USERS;
+                        displayName = 'گروه ۲ نفره';
+                    } else if (t.member_count === 3) {
+                        displayAvatar = ICON_3_USERS;
+                        displayName = 'گروه ۳ نفره';
+                    }
+
+                    const row = document.createElement('div');
+                    row.className = 'flex items-center gap-3 p-2 bg-gray-50 hover:bg-blue-50 rounded-xl cursor-pointer border border-gray-200';
+                    row.innerHTML = `<img src="${esc(displayAvatar)}" onerror="${AVATAR_FALLBACK}" class="w-10 h-10 rounded-full object-cover border border-gray-200 bg-white"><div><div class="font-bold text-sm text-gray-800">${esc(displayName)}</div><div class="text-xs text-orange-600">مقصد: ${esc(t.dest_name || 'نامشخص')}</div></div>`;
+                    row.addEventListener('click', () => {
+                        renderSelectedTravelerPanel(t);
+                        panTo(t.lat, t.lng, 16);
+                    });
+                    list.appendChild(row);
+                });
+                
+                if (currentSelectedTraveler) {
+                    const oldMemberIds = currentSelectedTraveler.members.map(m => m.id);
+                    const updatedGroup = liveTravelers.find(g => 
+                        g.members.some(newM => oldMemberIds.includes(newM.id))
+                    );
+                    
+                    if (updatedGroup) {
+                        renderSelectedTravelerPanel(updatedGroup);
+                    } else {
+                        cancelOrNevermind();
+                    }
+                }
+                
+            } catch(e) {}
+        }
+        function clearPersonMarkers() { personMarkers.forEach(m => map.removeLayer(m)); personMarkers = []; }
+
+        function renderSelectedTravelerPanel(t) {
+            currentSelectedTraveler = t;
+            
+            $('travelers-list').classList.add('hidden');
+            $('person-mode-desc').classList.add('hidden');
+            $('h-selected-person-panel').classList.remove('hidden');
+            
+            let html = '';
+            
+            if (t.member_count === 1) {
+                const m = t.members[0];
+                html = `
+                <div class="flex items-center gap-4 bg-white p-3 rounded-xl border border-gray-200 shadow-sm mb-3">
+                    <img src="${esc(m.avatar)}" onerror="${AVATAR_FALLBACK}" class="w-12 h-12 rounded-full object-cover border-2 border-blue-500">
+                    <div>
+                        <h2 class="font-bold text-sm text-gray-800">${esc(m.name)}</h2>
+                        <div class="text-yellow-500 text-[10px] flex gap-0.5 mt-0.5">
+                            <i class="fa-solid fa-star"></i><i class="fa-solid fa-star"></i><i class="fa-solid fa-star"></i><i class="fa-solid fa-star"></i><i class="fa-regular fa-star"></i>
+                        </div>
+                        <p class="text-[10px] text-gray-500 mt-1">مقصد اعلام شده: ${esc(t.dest_name || 'نامشخص')}</p>
+                    </div>
+                </div>`;
+            } else {
+                html = `
+                <div class="font-bold text-sm text-gray-800 border-b border-blue-200 pb-2 mb-3 flex items-center justify-between">
+                    <span>گروه ${fa(t.member_count)} نفره</span>
+                    <span class="text-xs font-normal text-blue-600">مقصد: ${esc(t.dest_name || 'نامشخص')}</span>
+                </div>`;
+                
+                t.members.forEach(m => {
+                    html += `
+                    <div class="flex items-center gap-3 bg-white p-2 rounded-xl border border-gray-100 shadow-sm mb-2 last:mb-0">
+                        <img src="${esc(m.avatar)}" onerror="${AVATAR_FALLBACK}" class="w-10 h-10 rounded-full object-cover border border-gray-200">
+                        <div>
+                            <div class="font-bold text-xs text-gray-800">${esc(m.name)}</div>
+                            <div class="text-yellow-500 text-[10px] flex gap-0.5 mt-0.5">
+                                <i class="fa-solid fa-star"></i><i class="fa-solid fa-star"></i><i class="fa-solid fa-star"></i><i class="fa-solid fa-star"></i><i class="fa-regular fa-star"></i>
+                            </div>
+                        </div>
+                    </div>`;
+                });
+            }
+            
+            $('panel-group-members').innerHTML = html;
+            
+            let hasPendingReq = false;
+            let matchedReqId = null;
+            
+            for (const m of t.members) {
+                if (activeOutboundRequests[m.id]) {
+                    hasPendingReq = true;
+                    matchedReqId = m.id;
+                    break;
+                }
+            }
+            if (!hasPendingReq && activeOutboundRequests[t.id]) {
+                hasPendingReq = true;
+                matchedReqId = t.id;
+            }
+            
+            if (hasPendingReq) {
+                $('request-status-box').classList.remove('hidden');
+                $('request-status-box').className = 'bg-amber-50 border border-amber-200 p-2 rounded-lg text-xs text-amber-800 flex items-center gap-2 mb-3';
+                $('request-status-box').innerHTML = '<i class="fa-solid fa-hourglass-half animate-spin"></i> <span>درخواست ارسال شد. منتظر تایید...</span>';
+                $('btn-send-req').classList.add('hidden');
+                $('btn-cancel-req').innerHTML = 'لغو درخواست';
+                $('btn-cancel-req').setAttribute('data-target-id', matchedReqId);
+            } else {
+                $('request-status-box').classList.add('hidden');
+                $('btn-send-req').innerHTML = '<i class="fa-solid fa-paper-plane mr-1"></i> ارسال درخواست';
+                $('btn-send-req').classList.remove('hidden');
+                $('btn-cancel-req').innerHTML = 'انصراف';
+                $('btn-cancel-req').removeAttribute('data-target-id');
+            }
+        }
+
+        function backToTravelersList() { 
+            $('h-selected-person-panel').classList.add('hidden');
+            $('travelers-list').classList.remove('hidden');
+            $('person-mode-desc').classList.remove('hidden');
+            currentSelectedTraveler = null;
+            if (points.start) panTo(points.start.lat, points.start.lng, 14);
+        }
+
+        async function sendRideRequest() {
+            if (!currentSelectedTraveler) return;
+            const receiverId = currentSelectedTraveler.id;
+            
+            $('request-status-box').classList.remove('hidden');
+            $('request-status-box').className = 'bg-amber-50 border border-amber-200 p-2 rounded-lg text-xs text-amber-800 flex items-center gap-2 mb-3';
+            $('request-status-box').innerHTML = '<i class="fa-solid fa-hourglass-half animate-spin"></i> <span>درخواست ارسال شد. منتظر تایید...</span>';
+            $('btn-send-req').classList.add('hidden'); 
+            $('btn-cancel-req').innerHTML = 'لغو درخواست';
+            
+            try {
+                const res = await fetch(`${API_BASE}/requests`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ sender_id: currentUser.id, sender_name: currentUser.name, sender_avatar: currentUser.avatar, receiver_id: receiverId })
+                });
+                const data = await res.json();
+                const reqId = data.request_id; 
+                
+                const interval = setInterval(async () => {
+                    const sRes = await fetch(`${API_BASE}/requests/status/${reqId}`);
+                    const sData = await sRes.json();
+                    
+                    if (sData.status === 'accepted') {
+                        clearInterval(interval);
+                        delete activeOutboundRequests[receiverId];
+                        showToast('درخواست شما قبول شد!', 'success');
+                        
+                        if (currentSelectedTraveler && currentSelectedTraveler.id === receiverId) {
+                            $('h-selected-person-panel').classList.add('hidden');
+                            $('travelers-list').classList.remove('hidden');
+                            $('person-mode-desc').classList.remove('hidden');
+                            currentSelectedTraveler = null;
+                        }
+                        
+                        // هدایت فرستنده به گروه دائمی یا موقت بر اساس دیتابیس
+                        if (sData.perm_group_id) {
+                            openPermGroupsPanel(sData.perm_group_id);
+                        } else {
+                            switchHTab('group');
+                            loadChatMessages();
+                        }
+                        
+                    } else if (sData.status === 'rejected') {
+                        clearInterval(interval);
+                        delete activeOutboundRequests[receiverId];
+                        showToast('درخواست شما رد شد.', 'error');
+                        if (currentSelectedTraveler && currentSelectedTraveler.id === receiverId) {
+                            backToTravelersList();
+                        }
+                    } else if (sData.status === 'cancelled') {
+                        clearInterval(interval);
+                        delete activeOutboundRequests[receiverId];
+                        showToast('درخواست از طرف گیرنده لغو شد.', 'error');
+                        if (currentSelectedTraveler && currentSelectedTraveler.id === receiverId) {
+                            backToTravelersList();
+                        }
+                    }
+                }, 2000); 
+                
+                activeOutboundRequests[receiverId] = { reqId, interval };
+                
+            } catch(e) { 
+                showToast('خطا در ارسال درخواست', 'error'); 
+                $('btn-send-req').classList.remove('hidden'); 
+            }
+        }
+
+        function cancelOrNevermind() {
+            if (!currentSelectedTraveler) return;
+            const btn = $('btn-cancel-req');
+            const receiverId = btn.getAttribute('data-target-id') || currentSelectedTraveler.id;
+            
+            if (activeOutboundRequests[receiverId]) {
+                showToast('درخواست شما لغو شد.', 'info');
+                clearInterval(activeOutboundRequests[receiverId].interval);
+                const reqId = activeOutboundRequests[receiverId].reqId;
+                fetch(`${API_BASE}/requests/${reqId}`, { method: 'DELETE' }).catch(() => {});
+                delete activeOutboundRequests[receiverId];
+            }
+            backToTravelersList();
+        }
+
+        let previousIncomingIds = "";
+        let globalPendingRequests = [];
+        
+        function updateAcceptedRequestsVisibility(fromPlanned) {
+            if (!fromPlanned) renderPlannedRequests();
+            const accContainer = $('accepted-requests-container');
+            const accTitle = $('accepted-requests-title');
+            const accList = $('h-accepted-list');
+            if (!accContainer || !accTitle || !accList) return;
+            
+            if (window.myGroupMemberCount === 1) {
+                if (globalPendingRequests.length > 0) {
+                    accContainer.classList.add('hidden');
+                } else {
+                    accTitle.classList.add('hidden');
+                    if (getPlanned().length) { accContainer.classList.add('hidden'); }
+                    else {
+                        accContainer.classList.remove('hidden');
+                        accList.innerHTML = '<div class="text-xs text-gray-400 p-2 text-center mt-6">هیچ درخواست یا همسفری ندارید.</div>';
+                    }
+                }
+            } else {
+                accContainer.classList.remove('hidden');
+                accTitle.classList.remove('hidden');
+            }
+        }
+
+        async function pollIncomingRequests() {
+            if (!currentUser) return;
+            try {
+                const res = await fetch(`${API_BASE}/requests/incoming/${currentUser.id}`);
+                const data = await res.json();
+                globalPendingRequests = data.requests || [];
+                
+                renderIncomingRequestsUI();
+                if (currentHTab === 'group') loadChatMessages();
+                
+                const currentIdsStr = globalPendingRequests.map(r => r.id).sort().join(',');
+                if (globalPendingRequests.length > 0 && currentIdsStr !== previousIncomingIds) {
+                    const prevSet = new Set(previousIncomingIds.split(','));
+                    const hasNew = globalPendingRequests.some(r => !prevSet.has(r.id.toString()));
+                    
+                    if (hasNew) {
+                        $('incoming-req-text').innerText = `شما ${fa(globalPendingRequests.length)} درخواست بررسی نشده دارید.`;
+                        $('incoming-req-modal').style.display = 'flex';
+                    }
+                }
+                previousIncomingIds = currentIdsStr;
+            } catch(e) {}
+        }
+        
+        function viewRequests() { 
+            $('incoming-req-modal').style.display = 'none'; 
+            openHamsafarPanel(); 
+            if (window.myGroupMemberCount > 1) {
+                switchHTab('group');
+            } else {
+                switchHTab('accepted');
+            }
+        }
+
+        function renderIncomingRequestsUI() {
+            const container = $('incoming-requests-container');
+            const list = $('incoming-requests-list');
+            if (!container || !list) return;
+
+            if (window.myGroupMemberCount > 1) {
+                container.classList.add('hidden');
+                container.classList.remove('flex');
+                list.innerHTML = '';
+            } else {
+                if (globalPendingRequests.length === 0) { 
+                    container.classList.add('hidden'); 
+                    container.classList.remove('flex');
+                    list.innerHTML = ''; 
+                } else {
+                    container.classList.remove('hidden');
+                    container.classList.add('flex');
+                    
+                    list.innerHTML = globalPendingRequests.map(req => `
+                        <div class="bg-blue-50/50 p-2 rounded-lg flex flex-col gap-2">
+                            <div class="flex items-center gap-2">
+                                <img src="${esc(req.sender_avatar)}" onerror="${AVATAR_FALLBACK}" class="w-8 h-8 rounded-full border border-blue-200 object-cover">
+                                <div><div class="font-bold text-xs text-gray-800">${esc(req.sender_name)}</div><div class="text-[10px] text-gray-500">درخواست همسفری</div></div>
+                            </div>
+                            <div class="flex gap-2">
+                                <button onclick="respondToRequest(${req.id}, 'accepted')" class="flex-1 bg-emerald-600 text-white font-medium py-1 rounded text-xs">قبول</button>
+                                <button onclick="respondToRequest(${req.id}, 'rejected')" class="flex-1 bg-white border border-gray-200 text-red-500 py-1 rounded text-xs">رد کردن</button>
+                            </div>
+                        </div>`).join('');
+                }
+            }
+            updateAcceptedRequestsVisibility();
+        }
+        
+        async function respondToRequest(reqId, status) {
+            try {
+                const res = await fetch(`${API_BASE}/requests/${reqId}/respond`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) });
+                const data = await res.json();
+                
+                if (!data.success && data.error) {
+                    showToast(data.error, 'error');
+                    return;
+                }
+                
+                showToast(status === 'accepted' ? 'قبول کردید!' : 'رد کردید.', status === 'accepted' ? 'success' : 'info');
+                
+                await pollIncomingRequests();
+                await loadAcceptedRequests();
+                
+                if (status === 'accepted') {
+                    // بررسی می‌کنیم که آیا گروه دائمی وجود دارد یا موقت
+                    if (data.perm_group_id) {
+                        openPermGroupsPanel(data.perm_group_id);
+                    } else {
+                        switchHTab('group');
+                        loadChatMessages();
+                    }
+                } else if (currentHTab === 'group') {
+                    loadChatMessages();
+                }
+            } catch(e) {}
+        }
+
+        async function loadAcceptedRequests() {
+            if (!currentUser) return;
+            try {
+                const res = await fetch(`${API_BASE}/requests/accepted/${currentUser.id}`);
+                const data = await res.json();
+                const list = $('h-accepted-list');
+                
+                window.myGroupMemberCount = (data.requests && data.requests.length > 0) ? data.requests.length + 1 : 1;
+                renderIncomingRequestsUI();
+
+                if (currentHTab !== 'accepted') return;
+                
+                if (!data.requests || data.requests.length === 0) {
+                    return;
+                }
+                
+                let displayAvatar = ICON_2_USERS;
+                let displayName = 'گروه ۲ نفره';
+                
+                if (window.myGroupMemberCount >= 3) {
+                    displayAvatar = ICON_3_USERS;
+                    displayName = `گروه ${fa(window.myGroupMemberCount)} نفره`;
+                }
+                
+                list.innerHTML = `
+                    <div class="flex items-center justify-between p-3 border border-gray-200 bg-white shadow-sm rounded-xl">
+                        <div class="flex items-center gap-3">
+                            <img src="${esc(displayAvatar)}" onerror="${AVATAR_FALLBACK}" class="w-10 h-10 rounded-full object-cover border border-emerald-200 bg-white">
+                            <div>
+                                <div class="font-bold text-sm text-gray-800">${esc(displayName)}</div>
+                                <div class="text-[10px] text-emerald-600 font-medium mt-0.5"><i class="fa-solid fa-check-double mr-1"></i> همسفران متصل شده</div>
+                            </div>
+                        </div>
+                        <button onclick="leaveGroup()" class="text-[10px] bg-red-50 text-red-600 border border-red-100 px-3 py-1.5 rounded-lg hover:bg-red-100 font-bold transition">ترک گروه</button>
+                    </div>
+                `;
+            } catch(e) {}
+        }
+
+        // --- Shared Group Chat ---
+        function openGroupInfo() {
+            $('h-chat-active').classList.add('hidden');
+            $('h-chat-active').classList.remove('flex');
+            
+            $('h-chat-info').classList.remove('hidden');
+            $('h-chat-info').classList.add('flex');
+            
+            loadGroupMembers();
+        }
+        
+        function closeGroupInfo() {
+            $('h-chat-info').classList.add('hidden');
+            $('h-chat-info').classList.remove('flex');
+            
+            $('h-chat-active').classList.remove('hidden');
+            $('h-chat-active').classList.add('flex');
+        }
+        
+        async function loadGroupMembers() {
+            if (!currentUser) return;
+            try {
+                const res = await fetch(`${API_BASE}/requests/accepted/${currentUser.id}`);
+                const data = await res.json();
+                
+                let html = `
+                    <div class="flex items-center justify-between p-2">
+                        <div class="flex items-center gap-3">
+                            <img src="${esc(currentUser.avatar)}" onerror="${AVATAR_FALLBACK}" class="w-10 h-10 rounded-full object-cover">
+                            <div class="font-bold text-sm text-gray-800">${esc(currentUser.name)} (شما)</div>
+                        </div>
+                    </div>
+                `;
+                
+                data.requests.forEach(req => {
+                    html += `
+                    <div class="flex items-center justify-between p-2 border-t border-gray-50 mt-1">
+                        <div class="flex items-center gap-3">
+                            <img src="${esc(req.other_avatar)}" onerror="${AVATAR_FALLBACK}" class="w-10 h-10 rounded-full object-cover">
+                            <div class="font-bold text-sm text-gray-800">${esc(req.other_name)}</div>
+                        </div>
+                        <button onclick="kickMember(${req.id})" class="text-[10px] text-red-500 hover:text-red-700 font-bold px-2 py-1.5 bg-red-50 hover:bg-red-100 rounded-lg transition">حذف همسفر</button>
+                    </div>`;
+                });
+                
+                $('group-members-list').innerHTML = html;
+            } catch (e) {}
+        }
+        
+        function kickMember(reqId) {
+            openConfirmModal('حذف همسفر', 'آیا از حذف این همسفر مطمئن هستید؟', 'fa-user-slash', 'حذف همسفر', async () => {
+                try {
+                    await fetch(`${API_BASE}/requests/cancel-accepted/${reqId}`, {
+                        method: 'POST', headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ userId: currentUser.id, userName: currentUser.name })
+                    });
+                    showToast('همسفر حذف شد.', 'success');
+                    loadGroupMembers();
+                    loadChatMessages();
+                } catch(e) {}
+            });
+        }
+
+        function leaveGroup() {
+            const infoMenu = $('info-menu'); if(infoMenu) infoMenu.classList.add('hidden');
+            const chatMenu = $('chat-menu'); if(chatMenu) chatMenu.classList.add('hidden');
+            
+            openConfirmModal('ترک گروه', 'آیا از ترک گروه و لغو تمامی همسفری‌ها اطمینان دارید؟ این کار قابل بازگشت نیست.', 'fa-arrow-right-from-bracket', 'بله، ترک گروه', async () => {
+                try {
+                    await fetch(`${API_BASE}/travelers/${currentUser.id}`, { method: 'DELETE' });
+                    showToast('از گروه خارج شدید.', 'info');
+                    closeGroupInfo();
+                    switchHTab('nearby');
+                    if (bothFilled()) await publishTraveler();
+                } catch(e) {}
+            });
+        }
+        
+        async function sendChatMessage() {
+            const inp = $('h-chat-input');
+            const text = inp.value.trim();
+            if (!text || !currentUser) return;
+            
+            inp.value = '';
+            try {
+                const res = await fetch(`${API_BASE}/chat`, {
+                    method: 'POST', 
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ 
+                        sender_id: currentUser.id, 
+                        sender_name: currentUser.name, 
+                        sender_avatar: currentUser.avatar, 
+                        text: text 
+                    })
+                });
+                
+                const data = await res.json();
+                
+                if (data.success) {
+                    previousMessageCount = -1;
+                    await loadChatMessages();
+                } else {
+                    showToast('خطا در ارسال پیام', 'error');
+                }
+            } catch(e) {
+                showToast('خطا در ارتباط با سرور', 'error');
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const chatInput = $('h-chat-input');
+            if(chatInput) {
+                chatInput.addEventListener('keypress', function (e) {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        sendChatMessage();
+                    }
+                });
+            }
+            
+            const permChatInput = $('perm-chat-input');
+            if(permChatInput) {
+                permChatInput.addEventListener('keypress', function (e) {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        sendPermChatMessage();
+                    }
+                });
+            }
+            
+            const permNameInput = $('edit-group-name-input');
+            if(permNameInput) {
+                permNameInput.addEventListener('keypress', function(e) {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        saveGroupName();
+                    }
+                });
+            }
+        });
+
+        async function loadChatMessages() {
+            if (!currentUser || currentHTab !== 'group') return;
+            try {
+                if (window.myGroupMemberCount === 1) {
+                    $('h-chat-empty').classList.remove('hidden');
+                    $('h-chat-active').classList.add('hidden');
+                    $('h-chat-active').classList.remove('flex');
+                    return;
+                }
+                
+                $('h-chat-empty').classList.add('hidden');
+                
+                if($('h-chat-info').classList.contains('hidden')){
+                    $('h-chat-active').classList.remove('hidden');
+                    $('h-chat-active').classList.add('flex');
+                }
+
+                const res = await fetch(`${API_BASE}/chat?userId=${currentUser.id}`);
+                const data = await res.json();
+                
+                const newContentState = data.messages.length + "-" + globalPendingRequests.length;
+                if (previousMessageCount === newContentState) return;
+                previousMessageCount = newContentState;
+
+                let html = `<div class="text-center text-[10px] text-gray-500 my-1 bg-white/60 mx-auto px-2 py-0.5 rounded-full">به گروه همسفران خوش آمدید</div>`;
+                
+                let renderItems = [];
+                
+                data.messages.forEach((m, idx) => {
+                    renderItems.push({ type: 'msg', data: m, index: idx });
+                });
+                
+                if (window.myGroupMemberCount > 1 && globalPendingRequests.length > 0) {
+                    globalPendingRequests.forEach(req => {
+                        if (requestInsertionIndex[req.id] === undefined) {
+                            requestInsertionIndex[req.id] = data.messages.length; 
+                        }
+                        renderItems.push({ type: 'req', data: req, index: requestInsertionIndex[req.id] });
+                    });
+                }
+                
+                renderItems.sort((a, b) => {
+                    if (a.index === b.index) {
+                        return a.type === 'req' ? -1 : 1;
+                    }
+                    return a.index - b.index;
+                });
+                
+                html += renderItems.map(item => {
+                    if (item.type === 'msg') {
+                        const m = item.data;
+                        if (m.sender_id === 0) {
+                            return `<div class="text-center text-[10px] text-emerald-600 font-bold my-2 bg-emerald-50 border border-emerald-100 mx-auto px-3 py-1 rounded-full">${esc(m.text)}</div>`;
+                        }
+                        
+                        const isMe = m.sender_id === currentUser.id;
+                        
+                        if (isMe) {
+                            return `
+                            <div class="flex gap-2 w-full justify-start">
+                                <img src="${esc(m.sender_avatar)}" onerror="${AVATAR_FALLBACK}" class="w-7 h-7 rounded-full mt-1 object-cover shrink-0">
+                                <div class="flex flex-col items-start max-w-[80%]">
+                                    <span class="text-[9px] text-gray-400 mb-0.5 px-1">${esc(m.sender_name)}</span>
+                                    <div class="text-xs px-3 py-2 shadow-sm bg-blue-500 text-white rounded-2xl rounded-tr-sm">
+                                        ${esc(m.text)}
+                                    </div>
+                                </div>
+                            </div>`;
+                        } else {
+                            return `
+                            <div class="flex gap-2 w-full justify-end">
+                                <div class="flex flex-col items-end max-w-[80%]">
+                                    <span class="text-[9px] text-gray-400 mb-0.5 px-1">${esc(m.sender_name)}</span>
+                                    <div class="text-xs px-3 py-2 shadow-sm bg-white text-gray-800 border border-gray-100 rounded-2xl rounded-tl-sm">
+                                        ${esc(m.text)}
+                                    </div>
+                                </div>
+                                <img src="${esc(m.sender_avatar)}" onerror="${AVATAR_FALLBACK}" class="w-7 h-7 rounded-full mt-1 object-cover shrink-0">
+                            </div>`;
+                        }
+                    } else {
+                        const req = item.data;
+                        return `
+                        <div class="mx-auto my-3 w-[90%] bg-blue-50 border border-blue-200 p-3 rounded-xl shadow-sm">
+                            <div class="text-center text-xs text-blue-800 font-bold mb-3 border-b border-blue-200 pb-2"><i class="fa-solid fa-user-plus mr-1"></i> درخواست پیوستن به گروه</div>
+                            <div class="flex items-center gap-3 mb-3">
+                                <img src="${esc(req.sender_avatar)}" onerror="${AVATAR_FALLBACK}" class="w-10 h-10 rounded-full border border-blue-200 object-cover">
+                                <div>
+                                    <div class="font-bold text-sm text-gray-800">${esc(req.sender_name)}</div>
+                                    <div class="text-[10px] text-gray-500 mt-0.5">می‌خواهد با شما همسفر شود</div>
+                                </div>
+                            </div>
+                            <div class="flex gap-2">
+                                <button onclick="respondToRequest(${req.id}, 'accepted')" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-2 rounded-lg text-xs transition shadow-sm">قبول درخواست</button>
+                                <button onclick="respondToRequest(${req.id}, 'rejected')" class="flex-1 bg-white hover:bg-gray-50 border border-gray-200 text-red-500 font-medium py-2 rounded-lg text-xs transition shadow-sm">رد کردن</button>
+                            </div>
+                        </div>`;
+                    }
+                }).join('');
+
+                const box = $('h-chat-messages');
+                box.innerHTML = html;
+                setTimeout(() => {
+                    box.scrollTop = box.scrollHeight;
+                }, 50);
+                
+            } catch(e) {
+                console.error("Chat loading error:", e);
+            }
+        }
+
+        // ==========================================
+        // NEW PERMANENT GROUPS LOGIC
+        // ==========================================
+        async function convertToPermanentGroup() {
+            if (!currentUser) return;
+            try {
+                const res = await fetch(`${API_BASE}/perm_groups/convert`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ userId: currentUser.id })
+                });
+                const data = await res.json();
+                
+                if (data.success) {
+                    showToast('گروه با موفقیت به گروه‌های دائمی اضافه شد.', 'success');
+                    openPermGroupsPanel(data.group_id); 
+                } else {
+                    showToast(data.error || 'خطا در تبدیل گروه', 'error');
+                }
+            } catch (e) {
+                showToast('خطای سرور', 'error');
+            }
+        }
+
+        async function loadPermanentGroups() {
+            if (!currentUser) return null;
+            try {
+                const res = await fetch(`${API_BASE}/perm_groups/${currentUser.id}`);
+                const data = await res.json();
+                
+                if (initialPermGroupsLoaded) {
+                    const newGroups = data.groups.filter(g => !knownPermGroupIds.has(g.id));
+                    
+                    data.groups.forEach(g => knownPermGroupIds.add(g.id));
+                    
+                    if (newGroups.length > 0) {
+                        openPermGroupsPanel(newGroups[0].id);
+                    }
+                } else {
+                    data.groups.forEach(g => knownPermGroupIds.add(g.id));
+                    initialPermGroupsLoaded = true;
+                }
+                
+                const container = $('perm-groups-list-container');
+                if (!data.groups || data.groups.length === 0) {
+                    container.innerHTML = `
+                        <div class="flex flex-col items-center justify-center text-center p-6 h-full text-gray-400">
+                            <i class="fa-solid fa-comments text-4xl mb-3 text-gray-300"></i>
+                            <p class="text-sm">هیچ گروهی ندارید</p>
+                        </div>
+                    `;
+                    return data.groups;
+                }
+                
+                container.innerHTML = data.groups.map(g => `
+                    <div class="flex items-center gap-3 p-3 border-b border-gray-100 hover:bg-gray-50 cursor-pointer transition" onclick="openPermChat(${g.id}, '${esc(g.name)}', '${esc(g.avatar)}')">
+                        <img src="${esc(g.avatar)}" onerror="${AVATAR_FALLBACK}" class="w-12 h-12 rounded-full object-cover shrink-0 border border-gray-200 bg-white">
+                        <div class="flex-1 min-w-0">
+                            <div class="flex justify-between items-baseline mb-1">
+                                <h3 class="font-bold text-sm text-gray-800 truncate">${esc(g.name)}</h3>
+                            </div>
+                            <p class="text-xs text-gray-500 truncate">${esc(g.last_msg || 'هنوز پیامی ارسال نشده است.')}</p>
+                        </div>
+                    </div>
+                `).join('');
+                
+                return data.groups;
+            } catch(e) { return null; }
+        }
+        
+        function openPermChat(groupId, name, avatar) {
+            activePermGroupId = groupId;
+            previousPermMessageCount = -1;
+            
+            $('perm-chat-title').innerText = name;
+            $('perm-chat-avatar').src = avatar;
+            
+            $('perm-groups-list-view').classList.add('hidden');
+            $('perm-groups-list-view').classList.remove('flex');
+            
+            $('perm-groups-chat-view').classList.remove('hidden');
+            $('perm-groups-chat-view').classList.add('flex');
+            
+            $('perm-chat-messages').innerHTML = '<div class="text-center mt-10"><i class="fa-solid fa-spinner fa-spin text-gray-400 text-2xl"></i></div>';
+            
+            loadPermChatMessages();
+        }
+        
+        function closePermChat() {
+            activePermGroupId = null;
+            closePermGroupDetail();
+            
+            $('perm-groups-chat-view').classList.add('hidden');
+            $('perm-groups-chat-view').classList.remove('flex');
+            
+            $('perm-groups-list-view').classList.remove('hidden');
+            $('perm-groups-list-view').classList.add('flex');
+            
+            loadPermanentGroups();
+        }
+
+        async function openPermGroupDetail() {
+            if (!activePermGroupId) return;
+            
+            $('perm-groups-chat-view').classList.add('hidden');
+            $('perm-groups-chat-view').classList.remove('flex');
+            
+            $('perm-group-detail-view').classList.remove('hidden');
+            $('perm-group-detail-view').classList.add('flex');
+            
+            $('edit-group-name-container').classList.add('hidden');
+            $('edit-group-name-container').classList.remove('flex');
+            
+            try {
+                const res = await fetch(`${API_BASE}/perm_groups/${activePermGroupId}/info`);
+                const data = await res.json();
+                
+                if (data.success) {
+                    const g = data.group;
+                    $('detail-group-name').innerText = g.name;
+                    $('edit-group-name-input').value = g.name;
+                    $('detail-group-count').innerText = `${fa(data.members.length)} اعضا`;
+                    
+                    const isOwner = g.owner_id === currentUser.id;
+                    
+                    if (isOwner) {
+                        $('edit-group-name-btn').classList.remove('hidden');
+                    } else {
+                        $('edit-group-name-btn').classList.add('hidden');
+                    }
+                    
+                    $('detail-members-list').innerHTML = data.members.map(m => `
+                        <div class="flex items-center justify-between p-3 hover:bg-gray-50 transition cursor-default border-b border-gray-50">
+                            <div class="flex items-center gap-3">
+                                <img src="${esc(m.avatar)}" onerror="${AVATAR_FALLBACK}" class="w-10 h-10 rounded-full object-cover border border-gray-200">
+                                <div>
+                                    <div class="font-bold text-sm text-gray-800">${esc(m.name)} ${m.id === currentUser.id ? '(شما)' : ''}</div>
+                                    <div class="text-[10px] text-gray-500">${g.owner_id === m.id ? 'مالک گروه' : 'عضو'}</div>
+                                </div>
+                            </div>
+                            ${isOwner && m.id !== currentUser.id ? `
+                            <button onclick="removePermMember(${g.id}, ${m.id})" class="text-red-500 hover:bg-red-50 p-2 rounded-full transition" title="حذف کاربر">
+                                <i class="fa-solid fa-circle-minus"></i>
+                            </button>` : ''}
+                        </div>
+                    `).join('');
+                }
+            } catch(e) {}
+        }
+        
+        function toggleGroupNameEdit() {
+            const container = $('edit-group-name-container');
+            const btn = $('edit-group-name-btn');
+            
+            if (container.classList.contains('hidden')) {
+                container.classList.remove('hidden');
+                container.classList.add('flex');
+                btn.classList.add('text-blue-600');
+                btn.classList.remove('text-gray-400');
+            } else {
+                container.classList.add('hidden');
+                container.classList.remove('flex');
+                btn.classList.add('text-gray-400');
+                btn.classList.remove('text-blue-600');
+            }
+        }
+        
+        async function saveGroupName() {
+            const newName = $('edit-group-name-input').value.trim();
+            if (!newName || !activePermGroupId || !currentUser) return;
+            
+            try {
+                const res = await fetch(`${API_BASE}/perm_groups/${activePermGroupId}/rename`, {
+                    method: 'PUT', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ ownerId: currentUser.id, newName: newName })
+                });
+                const data = await res.json();
+                
+                if (data.success) {
+                    $('detail-group-name').innerText = newName;
+                    $('perm-chat-title').innerText = newName; 
+                    toggleGroupNameEdit();
+                    showToast('نام گروه با موفقیت تغییر کرد.', 'success');
+                } else {
+                    showToast(data.error || 'خطا در تغییر نام.', 'error');
+                }
+            } catch(e) {
+                showToast('خطا در ارتباط با سرور.', 'error');
+            }
+        }
+
+        function closePermGroupDetail() {
+            $('perm-group-detail-view').classList.add('hidden');
+            $('perm-group-detail-view').classList.remove('flex');
+            
+            if (activePermGroupId) {
+                $('perm-groups-chat-view').classList.remove('hidden');
+                $('perm-groups-chat-view').classList.add('flex');
+            }
+        }
+
+        function removePermMember(groupId, targetId) {
+            openConfirmModal('حذف عضو', 'آیا از حذف این شخص از گروه اطمینان دارید؟', 'fa-user-slash', 'حذف', async () => {
+                try {
+                    const res = await fetch(`${API_BASE}/perm_groups/${groupId}/kick`, {
+                        method: 'POST', headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ ownerId: currentUser.id, targetId: targetId })
+                    });
+                    const data = await res.json();
+                    
+                    if (data.success) {
+                        showToast('عضو با موفقیت حذف شد.', 'success');
+                        openPermGroupDetail();
+                    } else {
+                        showToast(data.error || 'خطا در حذف عضو', 'error');
+                    }
+                } catch(e) {}
+            });
+        }
+
+        async function loadPermChatMessages() {
+            if (!currentUser || !activePermGroupId || !permGroupsOpen) return;
+            
+            try {
+                const res = await fetch(`${API_BASE}/perm_groups/${activePermGroupId}/messages`);
+                const data = await res.json();
+                
+                if (data.messages.length === previousPermMessageCount) return;
+                previousPermMessageCount = data.messages.length;
+
+                let html = `<div class="text-center text-[10px] text-gray-500 my-1 bg-white/60 mx-auto px-2 py-0.5 rounded-full">آغاز تاریخچه گروه</div>`;
+                
+                html += data.messages.map(m => {
+                    const isMe = m.sender_id === currentUser.id;
+                    
+                    if (isMe) {
+                        return `
+                        <div class="flex gap-2 w-full justify-start">
+                            <img src="${esc(m.sender_avatar)}" onerror="${AVATAR_FALLBACK}" class="w-7 h-7 rounded-full mt-1 object-cover shrink-0">
+                            <div class="flex flex-col items-start max-w-[80%]">
+                                <span class="text-[9px] text-gray-400 mb-0.5 px-1">${esc(m.sender_name)}</span>
+                                <div class="text-xs px-3 py-2 shadow-sm bg-purple-500 text-white rounded-2xl rounded-tr-sm">
+                                    ${esc(m.text)}
+                                </div>
+                            </div>
+                        </div>`;
+                    } else {
+                        return `
+                        <div class="flex gap-2 w-full justify-end">
+                            <div class="flex flex-col items-end max-w-[80%]">
+                                <span class="text-[9px] text-gray-400 mb-0.5 px-1">${esc(m.sender_name)}</span>
+                                <div class="text-xs px-3 py-2 shadow-sm bg-white text-gray-800 border border-gray-100 rounded-2xl rounded-tl-sm">
+                                    ${esc(m.text)}
+                                </div>
+                            </div>
+                            <img src="${esc(m.sender_avatar)}" onerror="${AVATAR_FALLBACK}" class="w-7 h-7 rounded-full mt-1 object-cover shrink-0">
+                        </div>`;
+                    }
+                }).join('');
+
+                const box = $('perm-chat-messages');
+                box.innerHTML = html;
+                box.scrollTop = box.scrollHeight;
+            } catch(e) {}
+        }
+        
+        async function sendPermChatMessage() {
+            const inp = $('perm-chat-input');
+            const text = inp.value.trim();
+            if (!text || !currentUser || !activePermGroupId) return;
+            
+            inp.value = '';
+            try {
+                await fetch(`${API_BASE}/perm_groups/${activePermGroupId}/messages`, {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ sender_id: currentUser.id, sender_name: currentUser.name, sender_avatar: currentUser.avatar, text: text })
+                });
+                
+                previousPermMessageCount = -1;
+                await loadPermChatMessages();
+            } catch(e){}
+        }
+
+        // ---------- Auth & Initialization ----------
+        function renderHeaderAuth() {
+            const el = $('header-auth-section');
+            if (!el) return;
+            if (!currentUser) {
+                el.innerHTML = `<button id="nav-btn-profile" onclick="openAuthModal('login')" class="flex flex-col items-center gap-1 text-gray-600 hover:text-blue-600 transition" title="ورود / ثبت‌نام"><i class="fa-solid fa-circle-user text-2xl"></i><span class="text-[10px]">ورود</span></button>`;
+            } else {
+                const nameStr = currentUser.name || 'کاربر';
+                const avatarStr = currentUser.avatar || DEFAULT_AVATAR;
+                el.innerHTML = `<button id="nav-btn-profile" onclick="openProfilePanel()" class="flex flex-col items-center gap-1 text-gray-600 hover:text-blue-600 transition" title="پروفایل کاربری"><img src="${esc(avatarStr)}" onerror="${AVATAR_FALLBACK}" class="w-8 h-8 rounded-full object-cover"><span class="text-[10px] max-w-[48px] truncate">${esc(nameStr.split(' ')[0])}</span></button>`;
+            }
+            updateSidebarIcons();
+        }
+        function openAuthModal(tab = 'login') { switchAuthTab(tab); $('auth-modal').style.display = 'flex'; }
+        function closeAuthModal() { $('auth-modal').style.display = 'none'; }
+        function switchAuthTab(tab) {
+            ['login', 'signup'].forEach(t => {
+                $(`tab-${t}`).className = t === tab ? 'font-bold text-blue-600 border-b-2 border-blue-600 pb-1 text-sm transition' : 'font-medium text-gray-500 pb-1 text-sm transition';
+                $(`form-${t}`).classList.toggle('hidden', t !== tab);
+            });
+        }
+        async function handleLogin() {
+            const phone = $('login-phone').value.trim();
+            if (!phone) { showToast('لطفاً شماره موبایل خود را وارد کنید.', 'error'); return; }
+            try {
+                const res = await fetch(`${API_BASE}/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone }) });
+                const data = await res.json();
+                if (data.success) { currentUser = data.user; finalizeLogin('ورود با موفقیت انجام شد!'); } 
+                else showToast(data.error || 'خطا در ورود.', 'error');
+            } catch (err) { showToast('خطا در ارتباط با سرور.', 'error'); }
+        }
+        async function handleSignup() {
+            const g = id => $(id).value.trim();
+            const name = g('signup-name'), family = g('signup-family'), phone = g('signup-phone');
+            if (!name || !family || !phone) { showToast('لطفاً فیلدهای ستاره‌دار را پر کنید.', 'error'); return; }
+            const file = $('signup-avatar-file'); let avatar = DEFAULT_AVATAR;
+            if (file.files && file.files[0]) {
+                avatar = await new Promise(res => { const reader = new FileReader(); reader.onload = e => res(e.target.result); reader.readAsDataURL(file.files[0]); });
+            }
+            try {
+                const res = await fetch(`${API_BASE}/register`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: name + ' ' + family, phone, role: 'passenger', avatar }) });
+                const data = await res.json();
+                if (data.success) { currentUser = data.user; finalizeLogin('ثبت‌نام با موفقیت انجام شد!'); } 
+                else showToast(data.error || 'این شماره ثبت شده است.', 'error');
+            } catch (err) { showToast('خطا در سرور.', 'error'); }
+        }
+        function finalizeLogin(msg) {
+            closeAuthModal(); renderHeaderAuth();
+            if ($('profile-panel-name')) $('profile-panel-name').innerText = currentUser.name || 'کاربر';
+            if ($('profile-panel-avatar')) $('profile-panel-avatar').src = currentUser.avatar || DEFAULT_AVATAR;
+            showToast(msg, 'success');
+            startTravelerPolling();
+            if (hamsafarOpen && bothFilled()) handleRoutingAction();
+        }
+        
+        function confirmLogout() {
+            openConfirmModal('خروج از حساب', 'آیا از خروج از حساب کاربری اطمینان دارید؟', 'fa-right-from-bracket', 'خروج', () => {
+                stopTravelerPolling();
+                
+                Object.values(activeOutboundRequests).forEach(req => clearInterval(req.interval));
+                activeOutboundRequests = {};
+                previousIncomingIds = "";
+                requestInsertionIndex = {}; 
+                
+                activePermGroupId = null;
+                previousPermMessageCount = -1;
+                knownPermGroupIds.clear();
+                initialPermGroupsLoaded = false;
+                
+                currentUser = null;
+                
+                closeProfilePanel();
+                closeHamsafarPanel();
+                closePermGroupsPanel();
+                closeDirections();
+                clearRoutes();
+                clearSearch();
+                
+                renderHeaderAuth();
+                showToast('با موفقیت خارج شدید.', 'success');
+            });
+        }
+
+        window.addEventListener('pagehide', () => {
+            if (currentUser) fetch(`${API_BASE}/travelers/${currentUser.id}`, { method: 'DELETE', keepalive: true }).catch(() => {});
+        });
+
+        window.addEventListener('DOMContentLoaded', () => {
+            const ys = $('signup-year'); if(ys) { for (let y = 1300; y <= 1405; y++) { const o = document.createElement('option'); o.value = y; o.innerText = y; ys.appendChild(o); } }
+            const ds = $('signup-day'); if(ds) { for (let d = 1; d <= 31; d++) { const o = document.createElement('option'); o.value = d < 10 ? '0' + d : d; o.innerText = d; ds.appendChild(o); } }
+            loadSaved(); renderSaved(); updateControls();
+            renderHeaderAuth();
+            getGPS().then(loc => map.setView([loc.lat, loc.lng], 14)).catch(() => {});
+        });
+    </script>
+</body>
+</html>
