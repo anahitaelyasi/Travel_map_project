@@ -1,6 +1,7 @@
 """Nimrah full-stack API contract: temporary chats are ephemeral; permanent groups persist."""
 import os
 import tempfile
+from datetime import timedelta
 from pathlib import Path
 
 os.environ['DATABASE_FILE'] = str(Path(tempfile.mkdtemp()) / 'test.sqlite3')
@@ -9,7 +10,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select, func
 from app.main import app
 from app.database import SessionLocal
-from app.models import Traveler, PermanentGroup, PermanentMember, GroupMessage, PermanentMessage
+from app.models import Traveler, TravelerPresence, RideRequest, PermanentGroup, PermanentMember, GroupMessage, PermanentMessage, utcnow
 
 
 def register(client, phone, name):
@@ -193,8 +194,8 @@ def test_stale_temporary_group_is_cleaned_at_restart_without_deleting_permanent_
     """Repair the previous version's logout bug, which left rows without presence."""
     from app.models import TravelerPresence
     with TestClient(app) as c:
-        first, fh = register(c, '09120001501', 'First')
-        second, sh = register(c, '09120001502', 'Second')
+        first, fh = register(c, '09120009991', 'First')
+        second, sh = register(c, '09120009992', 'Second')
         publish(c, first, fh)
         publish(c, second, sh)
         temp_join(c, first, fh, second, sh)
@@ -231,3 +232,38 @@ def test_pending_temp_request_moves_into_permanent_group_at_conversion():
         assert r.status_code == 200 and r.json()['success'], r.text
         assert {u['id'] for u in c.get(f'/api/perm_groups/{pg}/info',headers=oh).json()['members']} == {
             first, second, outsider}
+
+
+
+def test_live_matching_survives_pending_request_and_presence_heartbeat():
+    with TestClient(app) as c:
+        ana, ah = register(c, '09120009993', 'Ana')
+        mahan, mh = register(c, '09120009994', 'Mahan')
+        publish(c, ana, ah)
+        publish(c, mahan, mh, lat=35.8)
+
+        # A pending request must not hide the requester from the match list.
+        sent = c.post('/api/requests', headers=ah, json={
+            'sender_id': ana, 'receiver_id': mahan
+        })
+        assert sent.status_code == 200, sent.text
+        matches = c.get(f'/api/travelers?exclude_id={mahan}&travel_mode=now', headers=mh)
+        assert matches.status_code == 200, matches.text
+        assert any(any(member['id'] == ana for member in group['members'])
+                   for group in matches.json())
+
+        # Simulate a background tab whose heartbeat has expired.
+        with SessionLocal() as db:
+            presence = db.get(TravelerPresence, ana)
+            presence.updated_at = utcnow() - timedelta(minutes=4)
+            db.commit()
+        stale = c.get(f'/api/travelers?exclude_id={mahan}&travel_mode=now', headers=mh)
+        assert not any(any(member['id'] == ana for member in group['members'])
+                       for group in stale.json())
+
+        # The dedicated heartbeat refreshes availability without rewriting the route.
+        heartbeat = c.post('/api/travelers/heartbeat', headers=ah)
+        assert heartbeat.status_code == 200 and heartbeat.json()['success']
+        refreshed = c.get(f'/api/travelers?exclude_id={mahan}&travel_mode=now', headers=mh)
+        assert any(any(member['id'] == ana for member in group['members'])
+                   for group in refreshed.json())

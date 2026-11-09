@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>پنل مدیریت - Admin Portal</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+    <style>
+        .slim-scroll::-webkit-scrollbar { width: 5px; height: 5px; }
+        .slim-scroll::-webkit-scrollbar-track { background: transparent; }
+        .slim-scroll::-webkit-scrollbar-thumb { background-color: #cbd5e1; border-radius: 10px; }
+    </style>
+</head>
+<body class="h-screen bg-gray-100 font-sans overflow-hidden flex">
+
+    <!-- Toast Notifications -->
+    <div id="toast-container" class="fixed top-5 left-1/2 -translate-x-1/2 z-[10000] flex flex-col gap-2 pointer-events-none"></div>
+
+    <!-- Login View (Visible if not logged in or not admin) -->
+    <div id="login-view" class="fixed inset-0 bg-slate-900 z-50 flex items-center justify-center">
+        <div class="bg-white p-8 rounded-2xl shadow-2xl w-full max-w-sm text-center">
+            <div class="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto text-3xl mb-4"><i class="fa-solid fa-shield-halved"></i></div>
+            <h2 class="text-2xl font-bold text-gray-800 mb-2">ورود مدیریت</h2>
+            <p class="text-sm text-gray-500 mb-6">فقط حساب‌های دارای سطح دسترسی ادمین</p>
+            <form onsubmit="event.preventDefault(); handleAdminLogin();" class="space-y-4">
+                <input type="text" id="admin-phone" placeholder="شماره موبایل (09...)" class="w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-xl text-sm outline-none text-left" dir="ltr" required>
+                <button type="submit" class="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-3 rounded-xl shadow transition">ورود به پنل</button>
+            </form>
+            <div id="login-error" class="hidden mt-4 text-xs text-red-600 font-bold bg-red-50 py-2 rounded-lg"></div>
+        </div>
+    </div>
+
+    <!-- MAIN ADMIN PANEL (Hidden until authenticated) -->
+    <div id="admin-dashboard-view" class="hidden w-full h-full flex-col md:flex-row">
+        <!-- Sidebar -->
+        <div class="w-full md:w-64 bg-slate-900 text-white flex flex-col shadow-xl shrink-0">
+            <div class="p-6 border-b border-slate-800 flex flex-col items-center justify-center gap-3">
+                <div class="w-16 h-16 bg-slate-800 rounded-full flex items-center justify-center text-red-500 text-2xl border-2 border-slate-700">
+                    <i class="fa-solid fa-user-shield"></i>
+                </div>
+                <div class="text-center">
+                    <h2 class="font-bold text-lg" id="admin-name">مدیر سیستم</h2>
+                    <span class="text-[10px] text-slate-400 bg-slate-800 px-2 py-0.5 rounded-full uppercase tracking-wider">Admin</span>
+                </div>
+            </div>
+            <div class="flex-1 py-4 flex flex-col gap-2 px-3 overflow-y-auto slim-scroll">
+                <button onclick="switchTab('dashboard')" id="tabbtn-dashboard" class="flex items-center gap-3 px-4 py-3 rounded-xl bg-slate-800 text-blue-400 font-bold transition"><i class="fa-solid fa-chart-pie w-5"></i> داشبورد</button>
+                <button onclick="switchTab('users')" id="tabbtn-users" class="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-slate-800 text-slate-300 transition"><i class="fa-solid fa-users w-5"></i> کاربران</button>
+                <button onclick="switchTab('groups')" id="tabbtn-groups" class="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-slate-800 text-slate-300 transition"><i class="fa-solid fa-comments w-5"></i> گروه‌ها</button>
+            </div>
+            <div class="p-4 border-t border-slate-800">
+                <button onclick="logoutAdmin()" class="w-full py-3 bg-red-500/10 hover:bg-red-500/20 text-red-500 rounded-xl text-sm font-bold transition flex justify-center items-center gap-2">
+                    <i class="fa-solid fa-right-from-bracket"></i> خروج از سیستم
+                </button>
+            </div>
+        </div>
+        
+        <!-- Content Area -->
+        <div class="flex-1 overflow-y-auto p-6 md:p-10 bg-slate-50 relative slim-scroll">
+            
+            <!-- Dashboard Tab -->
+            <div id="tab-dashboard" class="space-y-6">
+                <h3 class="text-2xl font-black text-slate-800 mb-6 border-b border-slate-200 pb-4">آمار کلی پلتفرم</h3>
+                <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-6" id="stats-container">
+                    <div class="col-span-full py-10 flex justify-center"><i class="fa-solid fa-spinner fa-spin text-slate-400 text-3xl"></i></div>
+                </div>
+            </div>
+
+            <!-- Users Tab -->
+            <div id="tab-users" class="hidden space-y-6">
+                <div class="flex justify-between items-center mb-4 border-b border-slate-200 pb-4">
+                    <h3 class="text-2xl font-black text-slate-800">مدیریت کاربران</h3>
+                    <button onclick="loadUsers()" class="text-sm bg-white border border-slate-200 px-4 py-2 rounded-lg hover:bg-slate-50 transition shadow-sm"><i class="fa-solid fa-rotate-right ml-1 text-slate-400"></i> به‌روزرسانی</button>
+                </div>
+                <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-x-auto">
+                    <table class="w-full text-sm text-right min-w-[600px]">
+                        <thead class="bg-slate-50 text-slate-600 border-b border-slate-200">
+                            <tr><th class="p-4">آیدی</th><th class="p-4">مشخصات</th><th class="p-4">شماره</th><th class="p-4">نقش</th><th class="p-4">عملیات</th></tr>
+                        </thead>
+                        <tbody id="users-list" class="divide-y divide-slate-100"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Groups Tab -->
+            <div id="tab-groups" class="hidden space-y-6">
+                <div class="flex justify-between items-center mb-4 border-b border-slate-200 pb-4">
+                    <h3 class="text-2xl font-black text-slate-800">نظارت بر گروه‌ها</h3>
+                    <button onclick="loadGroups()" class="text-sm bg-white border border-slate-200 px-4 py-2 rounded-lg hover:bg-slate-50 transition shadow-sm"><i class="fa-solid fa-rotate-right ml-1 text-slate-400"></i> به‌روزرسانی</button>
+                </div>
+                <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-x-auto">
+                    <table class="w-full text-sm text-right min-w-[500px]">
+                        <thead class="bg-slate-50 text-slate-600 border-b border-slate-200">
+                            <tr><th class="p-4">آیدی گروه</th><th class="p-4">نام گروه</th><th class="p-4">آیدی مالک</th><th class="p-4 text-center">عملیات</th></tr>
+                        </thead>
+                        <tbody id="groups-list" class="divide-y divide-slate-100"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Confirm Modal -->
+    <div id="confirm-modal" class="hidden fixed inset-0 bg-slate-900/60 z-[11000] items-center justify-center backdrop-blur-sm">
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 relative text-center transform scale-95 transition-transform">
+            <div id="confirm-icon-box" class="w-16 h-16 rounded-full flex items-center justify-center mx-auto text-3xl mb-4 bg-red-50 text-red-500">
+                <i class="fa-solid fa-triangle-exclamation"></i>
+            </div>
+            <h3 id="confirm-title" class="font-bold text-gray-800 text-lg mb-2">تایید</h3>
+            <p id="confirm-desc" class="text-sm text-gray-600 mb-6">آیا مطمئن هستید؟</p>
+            <div class="flex gap-3">
+                <button id="confirm-yes-btn" class="flex-1 font-bold py-3 rounded-xl shadow transition text-white bg-red-500 hover:bg-red-600">بله</button>
+                <button onclick="document.getElementById('confirm-modal').classList.replace('flex', 'hidden')" class="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-3 rounded-xl transition">انصراف</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // API Configuration (Automatically handles local dev vs production)
+        const API_BASE = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' 
+            ? 'http://localhost:3000/api' 
+            : '/api';
+
+        const $ = id => document.getElementById(id);
+        const fa = n => Number(n).toLocaleString('fa-IR');
+        const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+        const DEFAULT_AVATAR = 'https://placehold.co/150x150/1e293b/ffffff?text=U';
+
+        let sessionToken = localStorage.getItem('nimrahSessionToken') || '';
+        let adminUser = null;
+
+        // Custom Fetch with Token
+        async function apiFetch(url, options = {}) {
+            const headers = new Headers(options.headers || {});
+            if (sessionToken) headers.set('Authorization', `Bearer ${sessionToken}`);
+            return fetch(url, { ...options, headers });
+        }
+
+        // Toasts
+        function showToast(message, type = 'info') {
+            const toast = document.createElement('div');
+            const bg = type === 'error' ? 'bg-red-500' : type === 'success' ? 'bg-emerald-500' : 'bg-slate-800';
+            toast.className = `${bg} text-white text-sm font-bold px-5 py-3 rounded-xl shadow-xl flex items-center gap-3 transition-opacity duration-300`;
+            toast.innerHTML = `<i class="fa-solid ${type === 'error' ? 'fa-circle-exclamation' : 'fa-circle-check'}"></i> <span>${esc(message)}</span>`;
+            $('toast-container').appendChild(toast);
+            setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 300); }, 3000);
+        }
+
+        // Confirmation Modal
+        let pendingCallback = null;
+        function openConfirm(title, desc, btnText, callback) {
+            $('confirm-title').innerText = title;
+            $('confirm-desc').innerText = desc;
+            $('confirm-yes-btn').innerText = btnText;
+            pendingCallback = callback;
+            $('confirm-modal').classList.replace('hidden', 'flex');
+        }
+        $('confirm-yes-btn').addEventListener('click', () => {
+            if (pendingCallback) pendingCallback();
+            $('confirm-modal').classList.replace('flex', 'hidden');
+        });
+
+        // ------------------ AUTHENTICATION ------------------
+        async function checkAuth() {
+            if (!sessionToken) {
+                showLogin();
+                return;
+            }
+            try {
+                const res = await apiFetch(`${API_BASE}/me`);
+                const data = await res.json();
+                
+                if (res.ok && data.success && data.user.role === 'admin') {
+                    adminUser = data.user;
+                    showDashboard();
+                } else {
+                    showLoginError('دسترسی رد شد. حساب کاربری شما مدیر نیست.');
+                    logoutAdmin();
+                }
+            } catch (e) {
+                showLogin();
+            }
+        }
+
+        async function handleAdminLogin() {
+            const phone = $('admin-phone').value.trim();
+            if (!phone) return;
+            
+            try {
+                const res = await fetch(`${API_BASE}/login`, { 
+                    method: 'POST', 
+                    headers: { 'Content-Type': 'application/json' }, 
+                    body: JSON.stringify({ phone }) 
+                });
+                const data = await res.json();
+                
+                if (res.ok && data.success) {
+                    if (data.user.role === 'admin') {
+                        sessionToken = data.token;
+                        localStorage.setItem('nimrahSessionToken', sessionToken);
+                        adminUser = data.user;
+                        $('login-error').classList.add('hidden');
+                        showToast('با موفقیت وارد شدید.', 'success');
+                        showDashboard();
+                    } else {
+                        showLoginError('دسترسی غیرمجاز. این حساب سطح مدیریت ندارد.');
+                    }
+                } else {
+                    showLoginError(data.error || 'کاربر یافت نشد.');
+                }
+            } catch (e) {
+                showLoginError('خطا در ارتباط با سرور.');
+            }
+        }
+
+        function logoutAdmin() {
+            sessionToken = '';
+            adminUser = null;
+            localStorage.removeItem('nimrahSessionToken');
+            showLogin();
+        }
+
+        function showLogin() {
+            $('login-view').classList.remove('hidden');
+            $('admin-dashboard-view').classList.add('hidden');
+            $('admin-dashboard-view').classList.remove('flex');
+        }
+
+        function showLoginError(msg) {
+            const el = $('login-error');
+            el.innerText = msg;
+            el.classList.remove('hidden');
+        }
+
+        function showDashboard() {
+            $('login-view').classList.add('hidden');
+            $('admin-dashboard-view').classList.remove('hidden');
+            $('admin-dashboard-view').classList.add('flex');
+            $('admin-name').innerText = adminUser.name;
+            switchTab('dashboard');
+        }
+
+        // ------------------ NAVIGATION & DATA ------------------
+        function switchTab(tab) {
+            ['dashboard', 'users', 'groups'].forEach(t => {
+                const btn = $(`tabbtn-${t}`);
+                const content = $(`tab-${t}`);
+                if (t === tab) {
+                    btn.className = `flex items-center gap-3 px-4 py-3 rounded-xl bg-slate-800 text-blue-400 font-bold transition`;
+                    content.classList.remove('hidden');
+                    if (tab === 'dashboard') loadStats();
+                    if (tab === 'users') loadUsers();
+                    if (tab === 'groups') loadGroups();
+                } else {
+                    btn.className = `flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-slate-800 text-slate-300 transition`;
+                    content.classList.add('hidden');
+                }
+            });
+        }
+
+        async function loadStats() {
+            try {
+                const res = await apiFetch(`${API_BASE}/admin/stats`);
+                if (!res.ok) throw new Error();
+                const data = await res.json();
+                
+                $('stats-container').innerHTML = `
+                    <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col items-center justify-center text-center">
+                        <div class="w-14 h-14 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center text-2xl mb-4"><i class="fa-solid fa-users"></i></div>
+                        <div class="text-4xl font-black text-slate-800">${fa(data.users)}</div>
+                        <div class="text-sm text-slate-500 mt-1 font-bold">کل کاربران ثبت‌نامی</div>
+                    </div>
+                    <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col items-center justify-center text-center">
+                        <div class="w-14 h-14 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center text-2xl mb-4"><i class="fa-solid fa-location-dot"></i></div>
+                        <div class="text-4xl font-black text-slate-800">${fa(data.active_travelers)}</div>
+                        <div class="text-sm text-slate-500 mt-1 font-bold">مسافران آنلاین نقشه</div>
+                    </div>
+                    <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col items-center justify-center text-center">
+                        <div class="w-14 h-14 bg-purple-50 text-purple-600 rounded-full flex items-center justify-center text-2xl mb-4"><i class="fa-solid fa-comments"></i></div>
+                        <div class="text-4xl font-black text-slate-800">${fa(data.groups)}</div>
+                        <div class="text-sm text-slate-500 mt-1 font-bold">گروه‌های دائمی فعال</div>
+                    </div>
+                    <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col items-center justify-center text-center">
+                        <div class="w-14 h-14 bg-orange-50 text-orange-600 rounded-full flex items-center justify-center text-2xl mb-4"><i class="fa-solid fa-bus"></i></div>
+                        <div class="text-4xl font-black text-slate-800">${fa(data.stations)}</div>
+                        <div class="text-sm text-slate-500 mt-1 font-bold">ایستگاه‌های ثبت‌شده</div>
+                    </div>
+                `;
+            } catch (e) { showToast('خطا در دریافت آمار', 'error'); }
+        }
+
+        async function loadUsers() {
+            try {
+                const res = await apiFetch(`${API_BASE}/admin/users`);
+                const data = await res.json();
+                $('users-list').innerHTML = data.users.map(u => `
+                    <tr class="hover:bg-slate-50 transition">
+                        <td class="p-4 font-mono text-xs text-slate-500">${u.id}</td>
+                        <td class="p-4">
+                            <div class="flex items-center gap-3">
+                                <img src="${esc(u.avatar || DEFAULT_AVATAR)}" onerror="this.src='${DEFAULT_AVATAR}'" class="w-10 h-10 rounded-full object-cover border border-slate-200">
+                                <span class="font-bold text-slate-800">${esc(u.name)}</span>
+                            </div>
+                        </td>
+                        <td class="p-4 text-slate-600 font-medium" dir="ltr">${esc(u.phone)}</td>
+                        <td class="p-4">
+                            <span class="px-2.5 py-1 ${u.role === 'admin' ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-600'} text-xs rounded-lg font-bold uppercase">${esc(u.role)}</span>
+                        </td>
+                        <td class="p-4">
+                            ${u.id !== adminUser.id ? `<button onclick="deleteUser(${u.id})" class="text-red-500 hover:bg-red-50 px-3 py-2 rounded-lg transition text-xs font-bold border border-transparent hover:border-red-100 shadow-sm"><i class="fa-solid fa-trash ml-1"></i> مسدود و حذف</button>` : '<span class="text-xs text-slate-400">شما</span>'}
+                        </td>
+                    </tr>
+                `).join('');
+            } catch (e) { showToast('خطا در دریافت لیست کاربران', 'error'); }
+        }
+
+        async function loadGroups() {
+            try {
+                const res = await apiFetch(`${API_BASE}/admin/groups`);
+                const data = await res.json();
+                $('groups-list').innerHTML = data.groups.map(g => `
+                    <tr class="hover:bg-slate-50 transition">
+                        <td class="p-4 font-mono text-xs text-slate-500">${g.id}</td>
+                        <td class="p-4 font-bold text-slate-800">${esc(g.name)}</td>
+                        <td class="p-4 font-mono text-xs text-slate-500">${g.owner_id}</td>
+                        <td class="p-4 text-center">
+                            <button onclick="deleteGroup(${g.id})" class="text-red-500 hover:bg-red-50 px-3 py-2 rounded-lg transition text-xs font-bold border border-transparent hover:border-red-100 shadow-sm"><i class="fa-solid fa-trash ml-1"></i> انحلال کامل</button>
+                        </td>
+                    </tr>
+                `).join('');
+            } catch (e) { showToast('خطا در دریافت لیست گروه‌ها', 'error'); }
+        }
+
+        function deleteUser(userId) {
+            openConfirm('حذف دائمی کاربر', 'آیا از حذف کامل این کاربر مطمئن هستید؟ تمامی اطلاعات این حساب پاک خواهد شد.', 'حذف دائمی', async () => {
+                try {
+                    const res = await apiFetch(`${API_BASE}/admin/users/${userId}`, { method: 'DELETE' });
+                    if(res.ok) { showToast('کاربر مسدود و حذف شد.', 'success'); loadUsers(); }
+                    else showToast('خطا در حذف کاربر', 'error');
+                } catch(e) { showToast('خطا در ارتباط با سرور', 'error'); }
+            });
+        }
+
+        function deleteGroup(groupId) {
+            openConfirm('انحلال گروه', 'آیا از حذف این گروه دائمی مطمئن هستید؟ پیام‌ها و سابقه گروه غیرقابل بازگشت است.', 'انحلال گروه', async () => {
+                try {
+                    const res = await apiFetch(`${API_BASE}/admin/groups/${groupId}`, { method: 'DELETE' });
+                    if(res.ok) { showToast('گروه با موفقیت منحل شد.', 'success'); loadGroups(); }
+                    else showToast('خطا در انحلال گروه', 'error');
+                } catch(e) { showToast('خطا در ارتباط با سرور', 'error'); }
+            });
+        }
+
+        // Initialize
+        checkAuth();
+    </script>
+</body>
+</html>

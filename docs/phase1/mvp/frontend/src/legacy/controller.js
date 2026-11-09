@@ -31,7 +31,7 @@ export function initializeLegacyApp() {
             $('toast-container').appendChild(toast);
             setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 300); }, ms);
         }
-        
+
         let pendingConfirmCallback = null;
         function openConfirmModal(title, desc, iconClass, btnText, callback) {
             $('confirm-title').innerText = title;
@@ -65,13 +65,13 @@ export function initializeLegacyApp() {
         let permGroupsOpen = false;
         let mainMenuOpen = false;
         let profilePanelOpen = false;
-        
+
         let currentHTab = 'nearby';
         let routeMode = 'time';              
         let profile = 'car';                 
         let currentUser = null;
         let pickMode = null;                 
-        
+
         let pendingStationData = {};
         let rawRoutes = [], rawKey = '', selectedRoute = 0, routeLayers = [];
         let personMarkers = [], requestActive = false;
@@ -79,7 +79,7 @@ export function initializeLegacyApp() {
         let tempAvatar = null;
         const points = { start: null, dest: null };
         const pointMarkers = { start: null, dest: null };
-        
+
         const inputsMapping = {
             'start': ['start-point', 'h-start-point'],
             'dest': ['dest-point', 'h-dest-point'],
@@ -88,13 +88,16 @@ export function initializeLegacyApp() {
         const saved = { home: null, work: null };
 
         let currentSelectedTraveler = null;
-        // An old route or a login alone must not publish a new trip.
         let travelerSearchActive = false;
+        let travelerSearchGroupStarted = false;
         let activeTravelersInterval = null;
+        let lastPresenceHeartbeatAt = 0;
         let activeOutboundRequests = {}; 
         let requestInsertionIndex = {}; 
-        
+
         let activePermGroupId = null;
+        let activePermGroupOwnerId = null; // Added logic for delete option access
+        
         let globalPermanentPendingRequests = [];
         let previousPermanentIncomingIds = "";
         let previousPermMessageCount = -1;
@@ -108,10 +111,10 @@ export function initializeLegacyApp() {
             const hamsafarBtn = $('nav-btn-hamsafar');
             const groupsBtn = $('nav-btn-groups');
             const profileBtn = $('nav-btn-profile');
-            
+
             const activeClass = 'text-blue-600';
             const inactiveClass = 'text-gray-600';
-            
+
             if(mapBtn) { mapBtn.classList.remove(activeClass, inactiveClass); mapBtn.classList.add(mainMenuOpen ? activeClass : inactiveClass); }
             if(hamsafarBtn) { hamsafarBtn.classList.remove(activeClass, inactiveClass); hamsafarBtn.classList.add(hamsafarOpen ? activeClass : inactiveClass); }
             if(groupsBtn) { groupsBtn.classList.remove(activeClass, inactiveClass); groupsBtn.classList.add(permGroupsOpen ? activeClass : inactiveClass); }
@@ -129,8 +132,6 @@ export function initializeLegacyApp() {
         }
 
         // ---------- Geocoding & Pins ----------
-        // Photon is intended for autocomplete; public Nominatim explicitly prohibits it.
-        // The Photon demo is appropriate for development/small testing, not a production SLA.
         function photonPlace(feature) {
             const p = feature.properties || {};
             const [lng, lat] = feature.geometry.coordinates;
@@ -142,7 +143,6 @@ export function initializeLegacyApp() {
         }
         let lastPhotonQuery = 0;
         async function searchPlaces(q) {
-            // A modest per-browser throttle avoids overwhelming the community demo server.
             const wait = Math.max(0, 1100 - (Date.now() - lastPhotonQuery));
             if (wait) await new Promise(resolve => setTimeout(resolve, wait));
             lastPhotonQuery = Date.now();
@@ -176,21 +176,22 @@ export function initializeLegacyApp() {
         }
         function setPoint(kind, lat, lng, label, fly = true) {
             const coreKind = kind.replace('h-', '');
-            if (hamsafarOpen && (coreKind === 'start' || coreKind === 'dest')) {
-                travelerSearchActive = true;
+            if (coreKind === 'start' || coreKind === 'dest') {
+                if (travelerSearchGroupStarted) travelerSearchGroupStarted = false;
+                if (hamsafarOpen) travelerSearchActive = true;
             }
             points[coreKind] = { lat, lng, label };
-            
+
             if (inputsMapping[coreKind]) {
                 inputsMapping[coreKind].forEach(id => { const el = $(id); if(el) el.value = label; });
             }
-            
+
             if (pointMarkers[coreKind]) map.removeLayer(pointMarkers[coreKind]);
             const m = L.marker([lat, lng], {
                 icon: coreKind === 'start' ? pinIcon('#2563eb', 'fa-circle-dot') : pinIcon('#ef4444', 'fa-flag-checkered'),
                 draggable: true
             }).addTo(map).bindPopup(esc(label));
-            
+
             m.on('dragend', async (e) => {
                 const ll = e.target.getLatLng();
                 const name = await reverseGeocode(ll.lat, ll.lng);
@@ -198,15 +199,15 @@ export function initializeLegacyApp() {
                 if (bothFilled()) handleRoutingAction();
             });
             pointMarkers[coreKind] = m;
-            
+
             hideBox(kind);
-            
+
             if (fly && !bothFilled()) panTo(lat, lng, Math.max(map.getZoom(), 15));
         }
 
         // ---------- Suggestions & Search ----------
         const debounceTimers = {};
-        
+
         function getBox(id) {
             const mapId = { 'start': 'suggest-start', 'dest': 'suggest-dest', 'h-start': 'suggest-h-start', 'h-dest': 'suggest-h-dest', 'search': 'suggest-search' };
             return $(mapId[id] || id);
@@ -238,7 +239,7 @@ export function initializeLegacyApp() {
                 }}
             ];
         }
-        
+
         function onPlacePicked(kind, p) {
             const lat = parseFloat(p.lat), lng = parseFloat(p.lon), name = shortName(p);
             if (kind === 'search') { setSearchPlace(lat, lng, name); return; }
@@ -257,19 +258,21 @@ export function initializeLegacyApp() {
         searchInputConfigs.forEach(conf => {
             const input = $(conf.inputId);
             if (!input) return;
-            
+
             input.addEventListener('focus', () => {
                 lastFocused = conf.id.replace('h-', '');
                 if (conf.id !== 'search' && !input.value.trim()) showBoxItems(conf.id, defaultOptions(conf.id));
             });
-            
+
             input.addEventListener('blur', () => setTimeout(() => hideBox(conf.id), 150));
-            
+
             input.addEventListener('input', () => {
                 const coreKind = conf.id.replace('h-', '');
-                if (coreKind !== 'search') points[coreKind] = null;
-                else $('search-clear').classList.toggle('hidden', !input.value);
-                
+                if (coreKind !== 'search') {
+                    if (travelerSearchGroupStarted) travelerSearchGroupStarted = false;
+                    points[coreKind] = null;
+                } else $('search-clear').classList.toggle('hidden', !input.value);
+
                 const q = input.value.trim();
                 clearTimeout(debounceTimers[conf.id]);
 
@@ -279,7 +282,7 @@ export function initializeLegacyApp() {
                     return; 
                 }
                 if (q.length < 2) { hideBox(conf.id); return; }
-                
+
                 debounceTimers[conf.id] = setTimeout(async () => {
                     showBoxItems(conf.id, [{ icon: 'fa-spinner fa-spin', title: 'در حال جستجو...', onPick: () => {} }]);
                     try {
@@ -301,7 +304,7 @@ export function initializeLegacyApp() {
             const sInp = $('search-input'); if(sInp) sInp.value = label;
             $('search-clear').classList.remove('hidden');
             hideBox('search');
-            
+
             if (searchMarker) map.removeLayer(searchMarker);
             searchMarker = L.marker([lat, lng], { icon: pinIcon('#ef4444', 'fa-location-dot') }).addTo(map)
                 .bindPopup(`<div style="min-width:170px"><div style="font-weight:700;margin-bottom:8px">${esc(label)}</div><button onclick="routeToSearched()" class="bg-blue-600 text-white text-xs px-3 py-1.5 rounded-lg w-full">مسیریابی به اینجا</button></div>`)
@@ -318,25 +321,24 @@ export function initializeLegacyApp() {
         function routeToSearched() { map.closePopup(); openDirections(searchPlace); }
 
         // ---------- Panels open / close ----------
-        // ---------- Panels open / close ----------
         function toggleMainMenu() {
             if (mainMenuOpen) closeMainMenu();
             else openMainMenu();
         }
-        
+
         function openMainMenu() {
             closeProfilePanel();
             closeDirections();
             closeHamsafarPanel();
             closePermGroupsPanel();
-            
+
             mainMenuOpen = true;
             $('main-menu-panel').classList.remove('hidden');
             $('main-menu-panel').classList.add('flex');
 
             updateSidebarIcons();
         }
-        
+
         function closeMainMenu() {
             mainMenuOpen = false;
             $('main-menu-panel').classList.add('hidden');
@@ -350,20 +352,20 @@ export function initializeLegacyApp() {
             closeHamsafarPanel();
             closePermGroupsPanel();
             closeMainMenu();
-            
+
             panelOpen = true;
             $('dir-panel').classList.remove('hidden');
-            
+
             let placeToUse = passedPlace || searchPlace;
             if (placeToUse) setPoint('dest', placeToUse.lat, placeToUse.lng, placeToUse.label, false);
             clearSearch();
             if (bothFilled()) handleRoutingAction();
             else if (points.start && !points.dest) { const el = $('dest-point'); if(el) el.focus(); }
             else { const el = $('start-point'); if(el) el.focus(); }
-            
+
             updateSidebarIcons();
         }
-        
+
         function closeDirections() {
             panelOpen = false;
             $('dir-panel').classList.add('hidden');
@@ -376,16 +378,19 @@ export function initializeLegacyApp() {
             closeDirections();
             closePermGroupsPanel();
             closeMainMenu();
-            
+
             hamsafarOpen = true;
             $('hamsafar-panel').classList.remove('hidden');
             $('hamsafar-panel').classList.add('flex');
-            
+
             profile = 'car';
-            if (bothFilled()) handleRoutingAction();
+            if (bothFilled()) {
+                travelerSearchActive = true;
+                handleRoutingAction();
+            }
             updateSidebarIcons();
         }
-        
+
         function closeHamsafarPanel() {
             hamsafarOpen = false;
             $('hamsafar-panel').classList.add('hidden');
@@ -399,20 +404,20 @@ export function initializeLegacyApp() {
             closeDirections();
             closeHamsafarPanel();
             closeMainMenu();
-            
+
             permGroupsOpen = true;
             $('groups-panel').classList.remove('hidden');
             $('groups-panel').classList.add('flex');
-            
+
             const groups = await loadPermanentGroups();
-            
+
             if (groupIdToOpen && groups) {
                 const targetGroup = groups.find(g => g.id === groupIdToOpen);
-                if (targetGroup) openPermChat(targetGroup.id, targetGroup.name, targetGroup.avatar);
+                if (targetGroup) openPermChat(targetGroup.id, targetGroup.name, targetGroup.avatar, targetGroup.owner_id);
             }
             updateSidebarIcons();
         }
-        
+
         function closePermGroupsPanel() {
             permGroupsOpen = false;
             activePermGroupId = null;
@@ -428,7 +433,7 @@ export function initializeLegacyApp() {
             closeHamsafarPanel();
             closePermGroupsPanel();
             closeMainMenu();
-            
+
             profilePanelOpen = true;
             $('profile-panel-avatar').src = currentUser.avatar || DEFAULT_AVATAR;
             $('profile-panel-name').innerText = currentUser.name || 'کاربر';
@@ -436,14 +441,14 @@ export function initializeLegacyApp() {
             $('profile-menu').classList.add('hidden');
             updateSidebarIcons();
         }
-        
+
         function closeProfilePanel() {
             profilePanelOpen = false;
             $('profile-panel').classList.add('hidden');
             $('profile-menu').classList.add('hidden');
             updateSidebarIcons();
         }
-        
+
         function openEditProfilePanel() {
             $('profile-menu').classList.add('hidden');
             $('profile-panel').classList.add('hidden');
@@ -487,27 +492,33 @@ export function initializeLegacyApp() {
             $('edit-profile-panel').classList.add('hidden');
             $('profile-panel').classList.remove('hidden');
         }
-        
+
         function toggleProfileMenu(e) { e.stopPropagation(); $('profile-menu').classList.toggle('hidden'); }
-        
+
         function toggleGroupMenu(menuId, e) { 
             e.stopPropagation(); 
             const menu = $(menuId);
             if (menu) menu.classList.toggle('hidden'); 
         }
         
+        function togglePermChatMenu(e) {
+            e.stopPropagation();
+            const menu = $('perm-chat-menu');
+            if (menu) menu.classList.toggle('hidden');
+        }
+
         document.addEventListener('click', function(e) {
             if ($('profile-menu') && !$('profile-menu').classList.contains('hidden') && !e.target.closest('#profile-menu') && !e.target.closest('button[title="گزینه‌ها"]')) {
                 $('profile-menu').classList.add('hidden');
             }
-            ['chat-menu', 'info-menu'].forEach(id => {
+            ['chat-menu', 'info-menu', 'perm-chat-menu'].forEach(id => {
                 const m = $(id);
                 if (m && !m.classList.contains('hidden') && !e.target.closest('.relative')) {
                     m.classList.add('hidden');
                 }
             });
         });
-        
+
         function switchProfileTab(tab, btn) {
             document.querySelectorAll('.profile-tab-btn').forEach(b => b.className = 'profile-tab-btn pb-2.5 text-sm font-medium text-gray-500 hover:text-gray-800 transition');
             btn.className = 'profile-tab-btn pb-2.5 text-sm font-bold text-blue-600 border-b-2 border-blue-600';
@@ -529,10 +540,10 @@ export function initializeLegacyApp() {
             if (!pickMode) return;
             const mode = pickMode;
             stopPicking();
-            
+
             if (mode === 'station-origin') { pendingStationData.origin = e.latlng; openStationStep1(); return; }
             if (mode === 'station-dest') { pendingStationData.dest = e.latlng; openStationStep3(); return; }
-            
+
             if (mode.startsWith('save-')) {
                 const key = mode.slice(5);
                 saved[key] = { lat: e.latlng.lat, lng: e.latlng.lng, label: await reverseGeocode(e.latlng.lat, e.latlng.lng) };
@@ -540,12 +551,12 @@ export function initializeLegacyApp() {
                 showToast('مکان با موفقیت ذخیره شد.', 'success');
                 return;
             }
-            
+
             const coreKind = mode.replace('h-', '');
             if(inputsMapping[coreKind]) {
                 inputsMapping[coreKind].forEach(id => { const el = $(id); if(el) el.value = '...'; });
             }
-            
+
             const name = await reverseGeocode(e.latlng.lat, e.latlng.lng);
             setPoint(mode, e.latlng.lat, e.latlng.lng, name, false);
             if (bothFilled()) handleRoutingAction();
@@ -555,15 +566,15 @@ export function initializeLegacyApp() {
             const a = points.start, b = points.dest;
             const sInp1 = $('start-point'), sInp2 = $('h-start-point');
             const dInp1 = $('dest-point'), dInp2 = $('h-dest-point');
-            
+
             const aLabel = sInp1 ? sInp1.value : '';
             const bLabel = dInp1 ? dInp1.value : '';
-            
+
             ['start', 'dest'].forEach(k => { if (pointMarkers[k]) { map.removeLayer(pointMarkers[k]); pointMarkers[k] = null; } points[k] = null; });
-            
+
             if(sInp1) sInp1.value = bLabel; if(sInp2) sInp2.value = bLabel;
             if(dInp1) dInp1.value = aLabel; if(dInp2) dInp2.value = aLabel;
-            
+
             if (b) setPoint('start', b.lat, b.lng, b.label, false);
             if (a) setPoint('dest', a.lat, a.lng, a.label, false);
             if (bothFilled()) handleRoutingAction();
@@ -593,7 +604,7 @@ export function initializeLegacyApp() {
         }
         function showSavedPlacesView() { $('route-selection-view').classList.add('hidden'); $('saved-places-view').classList.remove('hidden'); $('saved-places-view').classList.add('flex'); renderExtendedSavedList(); }
         function hideSavedPlacesView() { $('saved-places-view').classList.add('hidden'); $('saved-places-view').classList.remove('flex'); $('route-selection-view').classList.remove('hidden'); }
-        
+
         function renderExtendedSavedList() {
             if (!$('extended-saved-list')) return;
             let html = '';
@@ -607,7 +618,7 @@ export function initializeLegacyApp() {
                 </div>
                 <button class="text-gray-400 hover:text-gray-600"><i class="fa-solid ${saved.home ? 'fa-ellipsis-vertical' : 'fa-plus'}"></i></button>
             </div>`;
-            
+
             const workLabel = saved.work ? 'محل کار' : 'اضافه کردن محل کار';
             const workIconColor = saved.work ? 'text-orange-500' : 'text-orange-400';
             html += `
@@ -683,12 +694,12 @@ export function initializeLegacyApp() {
             }
             const nameMap = { 'yellow-taxi': 'تاکسی زرد', 'personal-taxi': 'تاکسی شخصی', 'bus': 'اتوبوس', 'van': 'ون / مینی‌بوس' };
             const vName = nameMap[pendingStationData.vehicleType] || pendingStationData.vehicleType;
-            
+
             let popupHtml = `<div class="text-right p-1"><b class="text-emerald-700 text-sm mb-1 block">ایستگاه ${esc(vName)}</b>`;
             popupHtml += `<div class="text-xs text-gray-700 mb-2 font-medium">کرایه حدودی: ${fa(fare)} تومان</div>`;
             if (times.length > 0) { popupHtml += `<div class="text-[10px] text-gray-500 mb-1 border-t pt-1">ساعات حضور:</div><ul class="text-[10px] text-gray-600 space-y-0.5">` + times.map(t => `<li>- ${t}</li>`).join('') + `</ul>`; }
             popupHtml += `</div>`;
-            
+
             try {
                 const result = await apiFetch(`${API_BASE}/stations`, {
                     method: 'POST', headers:{'Content-Type':'application/json'},
@@ -771,7 +782,7 @@ export function initializeLegacyApp() {
 
         // ---------- Transport profile + route type ----------
         function carLike() { return profile === 'car' || profile === 'moto'; }
-        
+
         const TAB_ON = 'profile-tab flex flex-col items-center gap-1 py-2 rounded-xl border text-xs border-blue-600 text-blue-600 bg-blue-50 font-bold';
         const TAB_OFF = 'profile-tab flex flex-col items-center gap-1 py-2 rounded-xl border text-xs border-gray-200 text-gray-600 hover:bg-gray-50';
         const SEG_ON = 'py-2 rounded-lg text-sm font-bold bg-blue-600 text-white shadow transition';
@@ -805,21 +816,21 @@ export function initializeLegacyApp() {
             const btnNow = $('btn-time-now');
             const btnLater = $('btn-time-later');
             const picker = $('schedule-picker');
-            
+
             if (mode === 'now') {
                 btnNow.className = 'flex-1 text-[11px] font-bold py-1.5 rounded-md bg-white shadow text-blue-600 transition';
                 btnLater.className = 'flex-1 text-[11px] font-medium py-1.5 rounded-md text-gray-500 hover:text-gray-700 transition';
                 picker.classList.remove('flex');
                 picker.classList.add('hidden');
-                $('btn-create-planned').classList.add('hidden');
+                $('btn-create-planned')?.classList.add('hidden');
             } else {
                 btnLater.className = 'flex-1 text-[11px] font-bold py-1.5 rounded-md bg-white shadow text-blue-600 transition';
                 btnNow.className = 'flex-1 text-[11px] font-medium py-1.5 rounded-md text-gray-500 hover:text-gray-700 transition';
                 picker.classList.remove('hidden');
                 picker.classList.add('flex');
-                $('btn-create-planned').classList.remove('hidden');
+                $('btn-create-planned')?.classList.remove('hidden');
             }
-            
+
             if (bothFilled()) handleRoutingAction();
         }
 
@@ -828,7 +839,7 @@ export function initializeLegacyApp() {
             if (activeTravelersInterval) clearInterval(activeTravelersInterval);
             activeTravelersInterval = setInterval(async () => {
                 if (!currentUser) return;
-                
+
                 try {
                     const notifRes = await apiFetch(`${API_BASE}/notifications/${currentUser.id}`);
                     const notifData = await notifRes.json();
@@ -836,7 +847,7 @@ export function initializeLegacyApp() {
                         notifData.notifications.forEach(n => showToast(n.message, 'info', 5000));
                     }
                 } catch(e) {}
-                
+
                 // ALWAYS POLL PERMANENT GROUPS SO NOTIFICATIONS/REDIRECTS WORK IN BACKGROUND
                 await loadPermanentGroups();
                 if (permGroupsOpen && activePermGroupId) {
@@ -846,9 +857,13 @@ export function initializeLegacyApp() {
                 // Poll incoming requests even when the Hamsafar sidebar is closed.
                 // Otherwise the receiver never sees the request notification.
                 await pollIncomingRequests();
-                // Keep advertising only after explicitly selecting a trip.
-                // Continue the heartbeat even if the sidebar is closed.
-                if (travelerSearchActive && bothFilled()) await publishTraveler();
+                // Keep live-search presence fresh without rewriting the route.
+                // Continue while the sidebar is closed, but only after the user
+                // explicitly activated Hamsafar search.
+                if (travelerSearchActive && bothFilled() &&
+                    Date.now() - lastPresenceHeartbeatAt >= 15000) {
+                    await refreshTravelerPresence();
+                }
                 if (hamsafarOpen) {
                     await loadAcceptedRequests();
                     if (travelerSearchActive && bothFilled() && currentHTab === 'nearby') {
@@ -863,6 +878,8 @@ export function initializeLegacyApp() {
             if (activeTravelersInterval) clearInterval(activeTravelersInterval);
             activeTravelersInterval = null;
             travelerSearchActive = false;
+            travelerSearchGroupStarted = false;
+            lastPresenceHeartbeatAt = 0;
             // The /api/logout endpoint already removes temporary membership.
             // No second DELETE request is needed; permanent groups are retained.
         }
@@ -871,7 +888,7 @@ export function initializeLegacyApp() {
         async function handleRoutingAction() {
             if (!bothFilled()) { showToast('لطفاً مبدا و مقصد را وارد کنید.', 'error'); return; }
             if (hamsafarOpen && !currentUser) { openAuthModal('login'); return; }
-            
+
             if(panelOpen) {
                 hideResultPanels();
                 $('road-panel').classList.remove('hidden');
@@ -881,12 +898,13 @@ export function initializeLegacyApp() {
             // Traveler availability must not depend on public OSRM routing being online.
             // Publish the selected origin/destination before requesting road directions.
             if (hamsafarOpen && travelerSearchActive) {
-                await publishTraveler();
-                if (currentHTab === 'nearby') await loadTravelersOnMap(true);
-                startTravelerPolling();
+                const published = await publishTraveler();
+                if (published) {
+                    if (currentHTab === 'nearby') await loadTravelersOnMap(true);
+                    startTravelerPolling();
+                }
             }
-
-            try { await fetchRoutes(); }
+                        try { await fetchRoutes(); }
             catch (e) {
                 clearRoutes();
                 console.warn('Road directions unavailable; traveler matching remains active.', e);
@@ -909,10 +927,10 @@ export function initializeLegacyApp() {
             const s = points.start, d = points.dest;
             const key = `${profile}|${s.lat},${s.lng}|${d.lat},${d.lng}`;
             if (key === rawKey && rawRoutes.length) return;
-            
+
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 8000);
-            
+
             try {
                 const r = await fetch(`${osrmBase()}${s.lng},${s.lat};${d.lng},${d.lat}?overview=full&geometries=geojson&alternatives=true&steps=true`, { signal: controller.signal });
                 clearTimeout(timeoutId);
@@ -971,7 +989,7 @@ export function initializeLegacyApp() {
             $('route-selection-view').classList.add('hidden');
             $('route-steps-view').classList.remove('hidden');
             $('route-steps-view').classList.add('flex');
-            
+
             let html = '';
             steps.forEach(st => {
                 const tr = translateManeuver(st);
@@ -1007,7 +1025,7 @@ export function initializeLegacyApp() {
             if(!$('road-panel')) return;
             const rs = sortedRoutes(), showCost = carLike();
             const bestLabel = routeMode === 'cost' ? 'ارزان‌ترین مسیر' : 'سریع‌ترین مسیر';
-            
+
             $('road-panel').innerHTML = rs.map((rt, i) => {
                 const km = rt.distance / 1000, sel = i === selectedRoute;
                 const title = i === 0 ? bestLabel : `مسیر جایگزین ${fa(i)}`;
@@ -1109,7 +1127,7 @@ export function initializeLegacyApp() {
             const two = n => String(n).padStart(2, '0');
             return `${d.getFullYear()}-${two(d.getMonth()+1)}-${two(d.getDate())}`;
         }
-        // Public API failures were previously suppressed, making a missing traveler
+                // Public API failures were previously suppressed, making a missing traveler
         // indistinguishable from a successful save. Reuse the original toast component;
         // never introduce new panels or alter the original design.
         let lastTravelerError = '';
@@ -1131,28 +1149,90 @@ export function initializeLegacyApp() {
             if (Array.isArray(detail)) return detail.map(x => x.msg || JSON.stringify(x)).join('، ');
             return typeof detail === 'string' ? detail : `HTTP ${response.status}`;
         }
+        async function refreshTravelerPresence() {
+            if (!currentUser || !travelerSearchActive) return false;
+            try {
+                const res = await apiFetch(`${API_BASE}/travelers/heartbeat`, { method: 'POST' });
+                if (res.status === 409) {
+                    // The server has no temporary trip for this session anymore
+                    // (for example, another tab logged into the same account).
+                    travelerSearchActive = false;
+                    lastPresenceHeartbeatAt = 0;
+                    return false;
+                }
+                if (!res.ok) throw new Error(await readApiError(res));
+                const data = await res.json();
+                if (!data.success) throw new Error(data.error || 'به‌روزرسانی وضعیت همسفر انجام نشد');
+                lastPresenceHeartbeatAt = Date.now();
+                return true;
+            } catch (error) {
+                reportTravelerError(error, 'به‌روزرسانی وضعیت همسفر');
+                return false;
+            }
+        }
+
         // Publish independently of the route-rendering service.
         async function publishTraveler() {
             if (!currentUser || !bothFilled()) return false;
+
             const mode = travelScheduleMode;
-            const date = mode === 'later' ? selectedTravelDate() : '';
-            const time = $('schedule-time')?.value || '';
-            // A scheduled trip requires its time; do not spam errors while editing it.
-            if (mode === 'later' && !time) return false;
+
+            const date = mode === 'later'
+                ? selectedTravelDate()
+                : '';
+
+            const time = mode === 'later'
+                ? ($('schedule-time')?.value || '')
+                : '';
+
+            if (mode === 'later' && !time) {
+                return false;
+            }
+
             try {
+                const payload = {
+                    user_id: currentUser.id,
+                    name: currentUser.name,
+                    avatar: currentUser.avatar || DEFAULT_AVATAR,
+
+                    lat: points.start.lat,
+                    lng: points.start.lng,
+
+                    dest_name: points.dest.label,
+
+                    travel_mode: mode,
+                    travel_date: date,
+                    travel_time: time,
+
+                    // The backend detaches this user from their previous
+                    // temporary group only on the first publish of a new search.
+                    new_search: !travelerSearchGroupStarted
+                };
+
                 const res = await apiFetch(`${API_BASE}/travelers`, {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        user_id: currentUser.id, name: currentUser.name, avatar: currentUser.avatar,
-                        lat: points.start.lat, lng: points.start.lng, dest_name: points.dest.label,
-                        travel_mode: mode, travel_date: date, travel_time: time
-                    })
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(payload)
                 });
-                if (!res.ok) throw new Error(await readApiError(res));
-                const saved = await res.json();
-                if (!saved.success) throw new Error(saved.error || 'ثبت سفر انجام نشد');
+
+                if (!res.ok) {
+                    throw new Error(await readApiError(res));
+                }
+
+                const data = await res.json();
+
+                if (!data.success) {
+                    throw new Error(data.error || 'ثبت سفر انجام نشد');
+                }
+
+                lastPresenceHeartbeatAt = Date.now();
                 lastTravelerError = '';
+                travelerSearchGroupStarted = true;
+
                 return true;
+
             } catch (error) {
                 reportTravelerError(error, 'ثبت همسفر');
                 return false;
@@ -1161,82 +1241,184 @@ export function initializeLegacyApp() {
 
         // UPGRADED: Fetching travelers matched by schedule
         async function loadTravelersOnMap(forceUI = true) {
+            if (!currentUser || !bothFilled()) return;
+
             try {
                 const mode = travelScheduleMode;
                 const date = mode === 'later' ? selectedTravelDate() : '';
-                
-                const res = await apiFetch(`${API_BASE}/travelers?exclude_id=${currentUser.id}&travel_mode=${mode}&travel_date=${date}`);
-                if (!res.ok) throw new Error(await readApiError(res));
-                const liveTravelers = await res.json();
-                if (!Array.isArray(liveTravelers)) throw new Error('پاسخ نامعتبر از سرور');
-                
-                if (forceUI) $('person-mode-desc').innerHTML = liveTravelers.length === 0 ? 'هنوز همسفری با شرایط مشابه شما پیدا نشده است.' : 'همسفران پیدا شده با مسیر و زمان مشابه:';
+
+                const params = new URLSearchParams({
+                    exclude_id: String(currentUser.id),
+                    travel_mode: mode
+                });
+
+                // Only send a date for scheduled trips.
+                if (mode === 'later' && date) {
+                    params.set('travel_date', date);
+                }
+
+                const res = await apiFetch(
+                    `${API_BASE}/travelers?${params.toString()}`,
+                    { cache: 'no-store' }
+                );
+
+                if (!res.ok) {
+                    throw new Error(await readApiError(res));
+                }
+
+                const responseData = await res.json();
+
+                const liveTravelers = Array.isArray(responseData)
+                    ? responseData
+                    : responseData.travelers;
+
+                if (!Array.isArray(liveTravelers)) {
+                    throw new Error('پاسخ نامعتبر از سرور');
+                }
+
+                const desc = $('person-mode-desc');
+                const list = $('travelers-list');
+
+                if (!list) return;
+
+                if (forceUI && desc) {
+                    desc.innerHTML = liveTravelers.length === 0
+                        ? 'هنوز همسفری با شرایط مشابه شما پیدا نشده است.'
+                        : 'همسفران پیدا شده با مسیر و زمان مشابه:';
+                }
 
                 clearPersonMarkers();
-                const list = $('travelers-list');
                 list.innerHTML = '';
-                
+
                 liveTravelers.forEach(t => {
+                    const members = Array.isArray(t.members) ? t.members : [];
+
+                    if (!members.length) {
+                        console.warn('Traveler group has no members:', t);
+                        return;
+                    }
+
+                    const memberCount = Number(t.member_count) || members.length;
+
+                    const firstMember = members[0];
+
                     let iconClass = 'fa-user';
-                    if(t.member_count === 2) iconClass = 'fa-user-group';
-                    if(t.member_count === 3) iconClass = 'fa-users';
 
-                    const marker = L.marker([t.lat, t.lng], {
-                        icon: L.divIcon({ className: 'pin', html: `<div style="background:#f97316;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:white;border:2px solid white;box-shadow:0 4px 6px rgba(0,0,0,.3);"><i class="fa-solid ${iconClass} text-xs"></i></div>`, iconSize: [32, 32] })
-                    }).addTo(map);
-                    marker.on('click', () => {
-                        renderSelectedTravelerPanel(t);
-                        panTo(t.lat, t.lng, 16);
-                    });
-                    personMarkers.push(marker);
+                    if (memberCount === 2) iconClass = 'fa-user-group';
+                    if (memberCount >= 3) iconClass = 'fa-users';
 
-                    let displayAvatar = t.members[0].avatar;
-                    let displayName = t.members[0].name;
+                    // Add a marker only when coordinates are valid.
+                    const lat = Number(t.lat);
+                    const lng = Number(t.lng);
 
-                    if (t.member_count === 2) {
+                    if (Number.isFinite(lat) && Number.isFinite(lng)) {
+                        const marker = L.marker([lat, lng], {
+                            icon: L.divIcon({
+                                className: 'pin',
+                                html: `
+                                    <div style="
+                                        background:#f97316;
+                                        width:32px;
+                                        height:32px;
+                                        border-radius:50%;
+                                        display:flex;
+                                        align-items:center;
+                                        justify-content:center;
+                                        color:white;
+                                        border:2px solid white;
+                                        box-shadow:0 4px 6px rgba(0,0,0,.3);
+                                    ">
+                                        <i class="fa-solid ${iconClass} text-xs"></i>
+                                    </div>
+                                `,
+                                iconSize: [32, 32]
+                            })
+                        }).addTo(map);
+
+                        marker.on('click', () => {
+                            renderSelectedTravelerPanel(t);
+                            panTo(lat, lng, 16);
+                        });
+
+                        personMarkers.push(marker);
+                    }
+
+                    let displayAvatar = firstMember.avatar || DEFAULT_AVATAR;
+                    let displayName = firstMember.name || 'همسفر';
+
+                    if (memberCount === 2) {
                         displayAvatar = ICON_2_USERS;
                         displayName = 'گروه ۲ نفره';
-                    } else if (t.member_count === 3) {
+                    } else if (memberCount >= 3) {
                         displayAvatar = ICON_3_USERS;
-                        displayName = 'گروه ۳ نفره';
+                        displayName = `گروه ${fa(memberCount)} نفره`;
                     }
 
                     const row = document.createElement('div');
-                    row.className = 'flex items-center gap-3 p-2 bg-gray-50 hover:bg-blue-50 rounded-xl cursor-pointer border border-gray-200';
-                    row.innerHTML = `<img src="${esc(displayAvatar)}" onerror="${AVATAR_FALLBACK}" class="w-10 h-10 rounded-full object-cover border border-gray-200 bg-white"><div><div class="font-bold text-sm text-gray-800">${esc(displayName)}</div><div class="text-xs text-orange-600">مقصد: ${esc(t.dest_name || 'نامشخص')}</div></div>`;
+
+                    row.className =
+                        'flex items-center gap-3 p-2 bg-gray-50 hover:bg-blue-50 rounded-xl cursor-pointer border border-gray-200';
+
+                    row.innerHTML = `
+                        <img
+                            src="${esc(displayAvatar)}"
+                            onerror="${AVATAR_FALLBACK}"
+                            class="w-10 h-10 rounded-full object-cover border border-gray-200 bg-white"
+                        >
+                        <div>
+                            <div class="font-bold text-sm text-gray-800">
+                                ${esc(displayName)}
+                            </div>
+                            <div class="text-xs text-orange-600">
+                                مقصد: ${esc(t.dest_name || 'نامشخص')}
+                            </div>
+                        </div>
+                    `;
+
                     row.addEventListener('click', () => {
                         renderSelectedTravelerPanel(t);
-                        panTo(t.lat, t.lng, 16);
+
+                        if (Number.isFinite(lat) && Number.isFinite(lng)) {
+                            panTo(lat, lng, 16);
+                        }
                     });
+
                     list.appendChild(row);
                 });
-                
+
+                // Keep the selected group synchronized with updated server data.
                 if (currentSelectedTraveler) {
-                    const oldMemberIds = currentSelectedTraveler.members.map(m => m.id);
-                    const updatedGroup = liveTravelers.find(g => 
-                        g.members.some(newM => oldMemberIds.includes(newM.id))
+                    const oldMemberIds = (
+                        currentSelectedTraveler.members || []
+                    ).map(m => Number(m.id));
+
+                    const updatedGroup = liveTravelers.find(g =>
+                        Array.isArray(g.members) &&
+                        g.members.some(m => oldMemberIds.includes(Number(m.id)))
                     );
-                    
+
                     if (updatedGroup) {
                         renderSelectedTravelerPanel(updatedGroup);
                     } else {
-                        cancelOrNevermind();
+                        backToTravelersList();
                     }
                 }
-                
-            } catch(e) { reportTravelerError(e, 'بارگذاری همسفران'); }
+
+            } catch (error) {
+                reportTravelerError(error, 'بارگذاری همسفران');
+            }
         }
         function clearPersonMarkers() { personMarkers.forEach(m => map.removeLayer(m)); personMarkers = []; }
 
         function renderSelectedTravelerPanel(t) {
             currentSelectedTraveler = t;
-            
+
             $('travelers-list').classList.add('hidden');
             $('person-mode-desc').classList.add('hidden');
             $('h-selected-person-panel').classList.remove('hidden');
-            
+
             let html = '';
-            
+
             if (t.member_count === 1) {
                 const m = t.members[0];
                 html = `
@@ -1256,7 +1438,7 @@ export function initializeLegacyApp() {
                     <span>گروه ${fa(t.member_count)} نفره</span>
                     <span class="text-xs font-normal text-blue-600">مقصد: ${esc(t.dest_name || 'نامشخص')}</span>
                 </div>`;
-                
+
                 t.members.forEach(m => {
                     html += `
                     <div class="flex items-center gap-3 bg-white p-2 rounded-xl border border-gray-100 shadow-sm mb-2 last:mb-0">
@@ -1270,12 +1452,12 @@ export function initializeLegacyApp() {
                     </div>`;
                 });
             }
-            
+
             $('panel-group-members').innerHTML = html;
-            
+
             let hasPendingReq = false;
             let matchedReqId = null;
-            
+
             for (const m of t.members) {
                 if (activeOutboundRequests[m.id]) {
                     hasPendingReq = true;
@@ -1287,7 +1469,7 @@ export function initializeLegacyApp() {
                 hasPendingReq = true;
                 matchedReqId = t.id;
             }
-            
+
             if (hasPendingReq) {
                 $('request-status-box').classList.remove('hidden');
                 $('request-status-box').className = 'bg-amber-50 border border-amber-200 p-2 rounded-lg text-xs text-amber-800 flex items-center gap-2 mb-3';
@@ -1396,7 +1578,7 @@ export function initializeLegacyApp() {
             if (!currentSelectedTraveler) return;
             const btn = $('btn-cancel-req');
             const receiverId = btn.getAttribute('data-target-id') || currentSelectedTraveler.id;
-            
+
             if (activeOutboundRequests[receiverId]) {
                 showToast('درخواست شما لغو شد.', 'info');
                 clearInterval(activeOutboundRequests[receiverId].interval);
@@ -1409,14 +1591,14 @@ export function initializeLegacyApp() {
 
         let previousIncomingIds = "";
         let globalPendingRequests = [];
-        
+
         function updateAcceptedRequestsVisibility(fromPlanned) {
             if (!fromPlanned) renderPlannedRequests();
             const accContainer = $('accepted-requests-container');
             const accTitle = $('accepted-requests-title');
             const accList = $('h-accepted-list');
             if (!accContainer || !accTitle || !accList) return;
-            
+
             if (window.myGroupMemberCount === 1) {
                 if (globalPendingRequests.length > 0) {
                     accContainer.classList.add('hidden');
@@ -1462,7 +1644,7 @@ export function initializeLegacyApp() {
 
         function viewRequests() {
             $('incoming-req-modal').style.display = 'none';
-            if (globalPermanentPendingRequests.length > 0) {
+                        if (globalPermanentPendingRequests.length > 0) {
                 openPermGroupsPanel(globalPermanentPendingRequests[0].perm_group_id);
                 return;
             }
@@ -1487,7 +1669,7 @@ export function initializeLegacyApp() {
                 } else {
                     container.classList.remove('hidden');
                     container.classList.add('flex');
-                    
+
                     list.innerHTML = globalPendingRequests.map(req => `
                         <div class="bg-blue-50/50 p-2 rounded-lg flex flex-col gap-2">
                             <div class="flex items-center gap-2">
@@ -1503,26 +1685,26 @@ export function initializeLegacyApp() {
             }
             updateAcceptedRequestsVisibility();
         }
-        
+
         async function respondToRequest(reqId, status) {
             try {
                 const res = await apiFetch(`${API_BASE}/requests/${reqId}/respond`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) });
                 const data = await res.json();
-                
+
                 if (!res.ok || !data.success) {
                     showToast(data.error || data.detail || 'پاسخ به درخواست ثبت نشد.', 'error');
                     return;
                 }
-                
+
                 showToast(status === 'accepted' ? 'قبول کردید!' : 'رد کردید.', status === 'accepted' ? 'success' : 'info');
-                
+
                 await pollIncomingRequests();
                 await loadAcceptedRequests();
                 if (activePermGroupId && permGroupsOpen) {
                     previousPermMessageCount = -1;
                     await loadPermChatMessages();
                 }
-                
+
                 if (status === 'accepted') {
                     // بررسی می‌کنیم که آیا گروه دائمی وجود دارد یا موقت
                     if (data.perm_group_id) {
@@ -1539,70 +1721,110 @@ export function initializeLegacyApp() {
 
         async function loadAcceptedRequests() {
             if (!currentUser) return;
+
             try {
-                const res = await apiFetch(`${API_BASE}/requests/accepted/${currentUser.id}`);
+                const res = await apiFetch(
+                    `${API_BASE}/requests/accepted/${currentUser.id}`,
+                    { cache: 'no-store' }
+                );
+
+                if (!res.ok) {
+                    throw new Error(await readApiError(res));
+                }
+
                 const data = await res.json();
-                const list = $('h-accepted-list');
-                
-                window.myGroupMemberCount = (data.requests && data.requests.length > 0) ? data.requests.length + 1 : 1;
+
+                const requests = Array.isArray(data.requests)
+                    ? data.requests
+                    : [];
+
+                window.myGroupMemberCount = requests.length + 1;
+
                 renderIncomingRequestsUI();
 
                 if (currentHTab !== 'accepted') return;
-                
-                if (!data.requests || data.requests.length === 0) {
-                    list.innerHTML = '<div class="text-xs text-gray-400 p-2 text-center mt-6">گروه موقتی فعالی ندارید.</div>';
+
+                const list = $('h-accepted-list');
+
+                if (!list) return;
+
+                if (requests.length === 0) {
+                    list.innerHTML = `
+                        <div class="text-xs text-gray-400 p-2 text-center mt-6">
+                            گروه موقتی فعالی ندارید.
+                        </div>
+                    `;
+
                     previousMessageCount = -1;
                     return;
                 }
 
                 let displayAvatar = ICON_2_USERS;
                 let displayName = 'گروه ۲ نفره';
-                
+
                 if (window.myGroupMemberCount >= 3) {
                     displayAvatar = ICON_3_USERS;
                     displayName = `گروه ${fa(window.myGroupMemberCount)} نفره`;
                 }
-                
+
                 list.innerHTML = `
                     <div class="flex items-center justify-between p-3 border border-gray-200 bg-white shadow-sm rounded-xl">
                         <div class="flex items-center gap-3">
-                            <img src="${esc(displayAvatar)}" onerror="${AVATAR_FALLBACK}" class="w-10 h-10 rounded-full object-cover border border-emerald-200 bg-white">
+                            <img
+                                src="${esc(displayAvatar)}"
+                                onerror="${AVATAR_FALLBACK}"
+                                class="w-10 h-10 rounded-full object-cover border border-emerald-200 bg-white"
+                            >
                             <div>
-                                <div class="font-bold text-sm text-gray-800">${esc(displayName)}</div>
-                                <div class="text-[10px] text-emerald-600 font-medium mt-0.5"><i class="fa-solid fa-check-double mr-1"></i> همسفران متصل شده</div>
+                                <div class="font-bold text-sm text-gray-800">
+                                    ${esc(displayName)}
+                                </div>
+                                <div class="text-[10px] text-emerald-600 font-medium mt-0.5">
+                                    <i class="fa-solid fa-check-double mr-1"></i>
+                                    همسفران متصل شده
+                                </div>
                             </div>
                         </div>
-                        <button onclick="leaveGroup()" class="text-[10px] bg-red-50 text-red-600 border border-red-100 px-3 py-1.5 rounded-lg hover:bg-red-100 font-bold transition">ترک گروه</button>
+
+                        <button
+                            onclick="leaveGroup()"
+                            class="text-[10px] bg-red-50 text-red-600 border border-red-100 px-3 py-1.5 rounded-lg hover:bg-red-100 font-bold transition"
+                        >
+                            ترک گروه
+                        </button>
                     </div>
                 `;
-            } catch(e) {}
+
+            } catch (error) {
+                console.error('Loading accepted requests failed:', error);
+            }
         }
 
         // --- Shared Group Chat ---
         function openGroupInfo() {
             $('h-chat-active').classList.add('hidden');
             $('h-chat-active').classList.remove('flex');
-            
+
             $('h-chat-info').classList.remove('hidden');
             $('h-chat-info').classList.add('flex');
-            
+
             loadGroupMembers();
         }
-        
+
         function closeGroupInfo() {
             $('h-chat-info').classList.add('hidden');
             $('h-chat-info').classList.remove('flex');
-            
+
             $('h-chat-active').classList.remove('hidden');
             $('h-chat-active').classList.add('flex');
         }
-        
+
         async function loadGroupMembers() {
             if (!currentUser) return;
             try {
                 const res = await apiFetch(`${API_BASE}/requests/accepted/${currentUser.id}`);
                 const data = await res.json();
-                
+
                 let html = `
                     <div class="flex items-center justify-between p-2">
                         <div class="flex items-center gap-3">
@@ -1611,7 +1833,7 @@ export function initializeLegacyApp() {
                         </div>
                     </div>
                 `;
-                
+
                 data.requests.forEach(req => {
                     html += `
                     <div class="flex items-center justify-between p-2 border-t border-gray-50 mt-1">
@@ -1622,11 +1844,11 @@ export function initializeLegacyApp() {
                         <button onclick="kickMember(${req.id})" class="text-[10px] text-red-500 hover:text-red-700 font-bold px-2 py-1.5 bg-red-50 hover:bg-red-100 rounded-lg transition">حذف همسفر</button>
                     </div>`;
                 });
-                
+
                 $('group-members-list').innerHTML = html;
             } catch (e) {}
         }
-        
+
         function kickMember(reqId) {
             openConfirmModal('حذف همسفر', 'آیا از حذف این همسفر مطمئن هستید؟', 'fa-user-slash', 'حذف همسفر', async () => {
                 try {
@@ -1644,10 +1866,12 @@ export function initializeLegacyApp() {
         function leaveGroup() {
             const infoMenu = $('info-menu'); if(infoMenu) infoMenu.classList.add('hidden');
             const chatMenu = $('chat-menu'); if(chatMenu) chatMenu.classList.add('hidden');
-            
+
             openConfirmModal('ترک گروه', 'آیا از ترک گروه و لغو تمامی همسفری‌ها اطمینان دارید؟ این کار قابل بازگشت نیست.', 'fa-arrow-right-from-bracket', 'بله، ترک گروه', async () => {
                 try {
                     travelerSearchActive = false;
+                    travelerSearchGroupStarted = false;
+                    lastPresenceHeartbeatAt = 0;
                     const res = await apiFetch(`${API_BASE}/travelers/${currentUser.id}`, { method: 'DELETE' });
                     if (!res.ok) throw new Error('Unable to leave temporary group');
                     window.myGroupMemberCount = 1;
@@ -1663,32 +1887,51 @@ export function initializeLegacyApp() {
 
         async function sendChatMessage() {
             const inp = $('h-chat-input');
-            const text = inp.value.trim();
-            if (!text || !currentUser) return;
-            
-            inp.value = '';
+
+            if (!inp || !currentUser) return;
+
+            const messageText = inp.value.trim();
+
+            if (!messageText) return;
+
             try {
                 const res = await apiFetch(`${API_BASE}/chat`, {
-                    method: 'POST', 
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ 
-                        sender_id: currentUser.id, 
-                        sender_name: currentUser.name, 
-                        sender_avatar: currentUser.avatar, 
-                        text: text 
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        sender_id: currentUser.id,
+                        sender_name: currentUser.name,
+                        sender_avatar: currentUser.avatar || DEFAULT_AVATAR,
+                        text: messageText
                     })
                 });
-                
+
                 const data = await res.json();
-                
-                if (data.success) {
-                    previousMessageCount = -1;
-                    await loadChatMessages();
-                } else {
-                    showToast('خطا در ارسال پیام', 'error');
+
+                if (!res.ok || !data.success) {
+                    throw new Error(
+                        data.error || data.detail || 'خطا در ارسال پیام'
+                    );
                 }
-            } catch(e) {
-                showToast('خطا در ارتباط با سرور', 'error');
+
+                // Only clear the input if the user hasn't typed another message.
+                if (inp.value.trim() === messageText) {
+                    inp.value = '';
+                }
+
+                previousMessageCount = -1;
+
+                await loadChatMessages();
+
+            } catch (error) {
+                console.error('Chat message error:', error);
+
+                showToast(
+                    error.message || 'خطا در ارتباط با سرور',
+                    'error'
+                );
             }
         }
 
@@ -1702,7 +1945,7 @@ export function initializeLegacyApp() {
                     }
                 });
             }
-            
+
             const permChatInput = $('perm-chat-input');
             if(permChatInput) {
                 permChatInput.addEventListener('keypress', function (e) {
@@ -1712,7 +1955,7 @@ export function initializeLegacyApp() {
                     }
                 });
             }
-            
+
             const permNameInput = $('edit-group-name-input');
             if(permNameInput) {
                 permNameInput.addEventListener('keypress', function(e) {
@@ -1733,9 +1976,9 @@ export function initializeLegacyApp() {
                     $('h-chat-active').classList.remove('flex');
                     return;
                 }
-                
+
                 $('h-chat-empty').classList.add('hidden');
-                
+
                 if($('h-chat-info').classList.contains('hidden')){
                     $('h-chat-active').classList.remove('hidden');
                     $('h-chat-active').classList.add('flex');
@@ -1743,44 +1986,44 @@ export function initializeLegacyApp() {
 
                 const res = await apiFetch(`${API_BASE}/chat?userId=${currentUser.id}`);
                 const data = await res.json();
-                
+
                 const newContentState = data.messages.length + "-" + globalPendingRequests.length;
                 if (previousMessageCount === newContentState) return;
                 previousMessageCount = newContentState;
 
                 let html = `<div class="text-center text-[10px] text-gray-500 my-1 bg-white/60 mx-auto px-2 py-0.5 rounded-full">به گروه همسفران خوش آمدید</div>`;
-                
+
                 let renderItems = [];
-                
+
                 data.messages.forEach((m, idx) => {
                     renderItems.push({ type: 'msg', data: m, index: idx });
                 });
-                
+
                 if (window.myGroupMemberCount > 1 && globalPendingRequests.length > 0) {
                     globalPendingRequests.forEach(req => {
                         if (requestInsertionIndex[req.id] === undefined) {
                             requestInsertionIndex[req.id] = data.messages.length; 
                         }
-                        renderItems.push({ type: 'req', data: req, index: requestInsertionIndex[req.id] });
+                                                renderItems.push({ type: 'req', data: req, index: requestInsertionIndex[req.id] });
                     });
                 }
-                
+
                 renderItems.sort((a, b) => {
                     if (a.index === b.index) {
                         return a.type === 'req' ? -1 : 1;
                     }
                     return a.index - b.index;
                 });
-                
+
                 html += renderItems.map(item => {
                     if (item.type === 'msg') {
                         const m = item.data;
                         if (m.sender_id === 0) {
                             return `<div class="text-center text-[10px] text-emerald-600 font-bold my-2 bg-emerald-50 border border-emerald-100 mx-auto px-3 py-1 rounded-full">${esc(m.text)}</div>`;
                         }
-                        
+
                         const isMe = m.sender_id === currentUser.id;
-                        
+
                         if (isMe) {
                             return `
                             <div class="flex gap-2 w-full justify-start">
@@ -1810,7 +2053,7 @@ export function initializeLegacyApp() {
                         <div class="mx-auto my-3 w-[90%] bg-blue-50 border border-blue-200 p-3 rounded-xl shadow-sm">
                             <div class="text-center text-xs text-blue-800 font-bold mb-3 border-b border-blue-200 pb-2"><i class="fa-solid fa-user-plus mr-1"></i> درخواست پیوستن به گروه</div>
                             <div class="flex items-center gap-3 mb-3">
-                                <img src="${esc(req.sender_avatar)}" onerror="${AVATAR_FALLBACK}" class="w-10 h-10 rounded-full border border-blue-200 object-cover">
+                                <img src="${esc(req.sender_avatar || DEFAULT_AVATAR)}" onerror="${AVATAR_FALLBACK}" class="w-10 h-10 rounded-full border border-blue-200 object-cover">
                                 <div>
                                     <div class="font-bold text-sm text-gray-800">${esc(req.sender_name)}</div>
                                     <div class="text-[10px] text-gray-500 mt-0.5">می‌خواهد با شما همسفر شود</div>
@@ -1829,7 +2072,7 @@ export function initializeLegacyApp() {
                 setTimeout(() => {
                     box.scrollTop = box.scrollHeight;
                 }, 50);
-                
+
             } catch(e) {
                 console.error("Chat loading error:", e);
             }
@@ -1846,7 +2089,7 @@ export function initializeLegacyApp() {
                     body: JSON.stringify({ userId: currentUser.id })
                 });
                 const data = await res.json();
-                
+
                 if (res.ok && data.success) {
                     showToast('گروه با موفقیت به گروه‌های دائمی اضافه شد.', 'success');
                     window.myGroupMemberCount = 1;
@@ -1867,111 +2110,170 @@ export function initializeLegacyApp() {
 
         async function loadPermanentGroups() {
             if (!currentUser) return null;
+
             try {
-                const res = await apiFetch(`${API_BASE}/perm_groups/${currentUser.id}`);
+                const res = await apiFetch(
+                    `${API_BASE}/perm_groups/${currentUser.id}`,
+                    { cache: 'no-store' }
+                );
+
+                if (!res.ok) {
+                    throw new Error(await readApiError(res));
+                }
+
                 const data = await res.json();
-                
+
+                const groups = Array.isArray(data.groups)
+                    ? data.groups
+                    : [];
+
                 if (initialPermGroupsLoaded) {
-                    const newGroups = data.groups.filter(g => !knownPermGroupIds.has(g.id));
-                    
-                    data.groups.forEach(g => knownPermGroupIds.add(g.id));
-                    
+                    const newGroups = groups.filter(
+                        g => !knownPermGroupIds.has(Number(g.id))
+                    );
+
+                    groups.forEach(g => {
+                        knownPermGroupIds.add(Number(g.id));
+                    });
+
                     if (newGroups.length > 0) {
                         openPermGroupsPanel(newGroups[0].id);
                     }
+
                 } else {
-                    data.groups.forEach(g => knownPermGroupIds.add(g.id));
+                    groups.forEach(g => {
+                        knownPermGroupIds.add(Number(g.id));
+                    });
+
                     initialPermGroupsLoaded = true;
                 }
-                
+
                 const container = $('perm-groups-list-container');
-                if (!data.groups || data.groups.length === 0) {
+
+                if (!container) return groups;
+
+                if (groups.length === 0) {
                     container.innerHTML = `
                         <div class="flex flex-col items-center justify-center text-center p-6 h-full text-gray-400">
                             <i class="fa-solid fa-comments text-4xl mb-3 text-gray-300"></i>
                             <p class="text-sm">هیچ گروهی ندارید</p>
                         </div>
                     `;
-                    return data.groups;
+
+                    return groups;
                 }
-                
-                container.innerHTML = data.groups.map(g => `
-                    <div class="flex items-center gap-3 p-3 border-b border-gray-100 hover:bg-gray-50 cursor-pointer transition" onclick="openPermChat(${g.id}, '${esc(g.name)}', '${esc(g.avatar)}')">
-                        <img src="${esc(g.avatar)}" onerror="${AVATAR_FALLBACK}" class="w-12 h-12 rounded-full object-cover shrink-0 border border-gray-200 bg-white">
+
+                container.innerHTML = groups.map(g => `
+                    <div
+                        class="flex items-center gap-3 p-3 border-b border-gray-100 hover:bg-gray-50 cursor-pointer transition"
+                        onclick="openPermChat(${Number(g.id)}, '${esc(g.name)}', '${esc(g.avatar || DEFAULT_AVATAR)}', ${Number(g.owner_id)})"
+                    >
+                        <img
+                            src="${esc(g.avatar || DEFAULT_AVATAR)}"
+                            onerror="${AVATAR_FALLBACK}"
+                            class="w-12 h-12 rounded-full object-cover shrink-0 border border-gray-200 bg-white"
+                        >
+
                         <div class="flex-1 min-w-0">
                             <div class="flex justify-between items-baseline mb-1">
-                                <h3 class="font-bold text-sm text-gray-800 truncate">${esc(g.name)}</h3>
+                                <h3 class="font-bold text-sm text-gray-800 truncate">
+                                    ${esc(g.name)}
+                                </h3>
                             </div>
-                            <p class="text-xs text-gray-500 truncate">${esc(g.last_msg || 'هنوز پیامی ارسال نشده است.')}</p>
+
+                            <p class="text-xs text-gray-500 truncate">
+                                ${esc(g.last_msg || 'هنوز پیامی ارسال نشده است.')}
+                            </p>
                         </div>
                     </div>
                 `).join('');
-                
-                return data.groups;
-            } catch(e) { return null; }
+
+                return groups;
+
+            } catch (error) {
+                console.error('Loading permanent groups failed:', error);
+                return null;
+            }
         }
-        
-        function openPermChat(groupId, name, avatar) {
+
+        function openPermChat(groupId, name, avatar, ownerId) {
             activePermGroupId = groupId;
+            activePermGroupOwnerId = ownerId;
             previousPermMessageCount = -1;
-            
+
             $('perm-chat-title').innerText = name;
             $('perm-chat-avatar').src = avatar;
-            
+
             $('perm-groups-list-view').classList.add('hidden');
             $('perm-groups-list-view').classList.remove('flex');
-            
+
             $('perm-groups-chat-view').classList.remove('hidden');
             $('perm-groups-chat-view').classList.add('flex');
             
+            const deleteBtn = $('btn-delete-perm-group');
+            if (deleteBtn) {
+                if (currentUser && activePermGroupOwnerId === currentUser.id) {
+                    deleteBtn.classList.remove('hidden');
+                    deleteBtn.classList.add('flex');
+                } else {
+                    deleteBtn.classList.add('hidden');
+                    deleteBtn.classList.remove('flex');
+                }
+            }
+
             $('perm-chat-messages').innerHTML = '<div class="text-center mt-10"><i class="fa-solid fa-spinner fa-spin text-gray-400 text-2xl"></i></div>';
-            
+
             loadPermChatMessages();
         }
-        
+
         function closePermChat() {
             activePermGroupId = null;
             closePermGroupDetail();
-            
+
             $('perm-groups-chat-view').classList.add('hidden');
             $('perm-groups-chat-view').classList.remove('flex');
-            
+
             $('perm-groups-list-view').classList.remove('hidden');
             $('perm-groups-list-view').classList.add('flex');
-            
+
             loadPermanentGroups();
         }
 
         async function openPermGroupDetail() {
             if (!activePermGroupId) return;
-            
+
             $('perm-groups-chat-view').classList.add('hidden');
             $('perm-groups-chat-view').classList.remove('flex');
-            
+
             $('perm-group-detail-view').classList.remove('hidden');
             $('perm-group-detail-view').classList.add('flex');
-            
+
             $('edit-group-name-container').classList.add('hidden');
             $('edit-group-name-container').classList.remove('flex');
-            
+
             try {
                 const res = await apiFetch(`${API_BASE}/perm_groups/${activePermGroupId}/info`);
+                if (res.status === 403) {
+                    showToast('شما دیگر عضو این گروه نیستید.', 'error');
+                    closePermChat();
+                    return;
+                }
                 const data = await res.json();
-                
+
                 if (data.success) {
                     const g = data.group;
                     $('detail-group-name').innerText = g.name;
                     $('edit-group-name-input').value = g.name;
                     $('detail-group-count').innerText = `${fa(data.members.length)} اعضا`;
-                    
+
                     const isOwner = g.owner_id === currentUser.id;
-                    
+
                     if (isOwner) {
                         $('edit-group-name-btn').classList.remove('hidden');
                     } else {
                         $('edit-group-name-btn').classList.add('hidden');
                     }
-                    
+
                     $('detail-members-list').innerHTML = data.members.map(m => `
                         <div class="flex items-center justify-between p-3 hover:bg-gray-50 transition cursor-default border-b border-gray-50">
                             <div class="flex items-center gap-3">
@@ -1991,10 +2293,54 @@ export function initializeLegacyApp() {
             } catch(e) {}
         }
         
+        function togglePermChatMenu(e) {
+            e.stopPropagation();
+            const menu = $('perm-chat-menu');
+            if (menu) menu.classList.toggle('hidden');
+        }
+        
+        function leavePermGroup() {
+            const menu = $('perm-chat-menu');
+            if (menu) menu.classList.add('hidden');
+            openConfirmModal('ترک گروه', 'آیا از ترک این گروه دائمی مطمئن هستید؟', 'fa-arrow-right-from-bracket', 'بله، ترک گروه', async () => {
+                try {
+                    const res = await apiFetch(`${API_BASE}/perm_groups/${activePermGroupId}/leave`, { method: 'POST' });
+                    const data = await res.json();
+                    if (res.ok && data.success) {
+                        showToast('از گروه خارج شدید.', 'info');
+                        closePermChat();
+                    } else {
+                        showToast(data.error || 'خطا در ترک گروه', 'error');
+                    }
+                } catch(e) {
+                    showToast('خطا در ارتباط با سرور', 'error');
+                }
+            });
+        }
+        
+        function deletePermGroup() {
+            const menu = $('perm-chat-menu');
+            if (menu) menu.classList.add('hidden');
+            openConfirmModal('حذف گروه', 'آیا از حذف کامل این گروه مطمئن هستید؟ این عمل غیرقابل بازگشت است.', 'fa-trash', 'حذف گروه', async () => {
+                try {
+                    const res = await apiFetch(`${API_BASE}/perm_groups/${activePermGroupId}`, { method: 'DELETE' });
+                    const data = await res.json();
+                    if (res.ok && data.success) {
+                        showToast('گروه با موفقیت حذف شد.', 'success');
+                        closePermChat();
+                    } else {
+                        showToast(data.error || 'خطا در حذف گروه', 'error');
+                    }
+                } catch(e) {
+                    showToast('خطا در ارتباط با سرور', 'error');
+                }
+            });
+        }
+
         function toggleGroupNameEdit() {
             const container = $('edit-group-name-container');
             const btn = $('edit-group-name-btn');
-            
+
             if (container.classList.contains('hidden')) {
                 container.classList.remove('hidden');
                 container.classList.add('flex');
@@ -2007,18 +2353,18 @@ export function initializeLegacyApp() {
                 btn.classList.remove('text-blue-600');
             }
         }
-        
+
         async function saveGroupName() {
             const newName = $('edit-group-name-input').value.trim();
             if (!newName || !activePermGroupId || !currentUser) return;
-            
+
             try {
                 const res = await apiFetch(`${API_BASE}/perm_groups/${activePermGroupId}/rename`, {
                     method: 'PUT', headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({ ownerId: currentUser.id, newName: newName })
                 });
                 const data = await res.json();
-                
+
                 if (data.success) {
                     $('detail-group-name').innerText = newName;
                     $('perm-chat-title').innerText = newName; 
@@ -2035,7 +2381,7 @@ export function initializeLegacyApp() {
         function closePermGroupDetail() {
             $('perm-group-detail-view').classList.add('hidden');
             $('perm-group-detail-view').classList.remove('flex');
-            
+
             if (activePermGroupId) {
                 $('perm-groups-chat-view').classList.remove('hidden');
                 $('perm-groups-chat-view').classList.add('flex');
@@ -2050,7 +2396,7 @@ export function initializeLegacyApp() {
                         body: JSON.stringify({ ownerId: currentUser.id, targetId: targetId })
                     });
                     const data = await res.json();
-                    
+
                     if (data.success) {
                         showToast('عضو با موفقیت حذف شد.', 'success');
                         openPermGroupDetail();
@@ -2059,16 +2405,23 @@ export function initializeLegacyApp() {
                     }
                 } catch(e) {}
             });
-        }
-
+        }        
+        
         async function loadPermChatMessages() {
             if (!currentUser || !activePermGroupId || !permGroupsOpen) return;
-            
+
             try {
                 const [messageResponse, requestResponse] = await Promise.all([
                     apiFetch(`${API_BASE}/perm_groups/${activePermGroupId}/messages`),
                     apiFetch(`${API_BASE}/perm_groups/${activePermGroupId}/requests`)
                 ]);
+                
+                if (messageResponse.status === 403 || requestResponse.status === 403) {
+                    showToast('شما دیگر عضو این گروه نیستید.', 'error');
+                    closePermChat();
+                    return;
+                }
+                
                 if (!messageResponse.ok || !requestResponse.ok) throw new Error('Permanent group fetch failed');
                 const data = await messageResponse.json();
                 const requestData = await requestResponse.json();
@@ -2078,10 +2431,10 @@ export function initializeLegacyApp() {
                 previousPermMessageCount = signature;
 
                 let html = `<div class="text-center text-[10px] text-gray-500 my-1 bg-white/60 mx-auto px-2 py-0.5 rounded-full">آغاز تاریخچه گروه</div>`;
-                
+
                 html += data.messages.map(m => {
                     const isMe = m.sender_id === currentUser.id;
-                    
+
                     if (isMe) {
                         return `
                         <div class="flex gap-2 w-full justify-start">
@@ -2107,7 +2460,6 @@ export function initializeLegacyApp() {
                     }
                 }).join('');
 
-                // Requests to converted groups appear IN the permanent chat, not Hamsafar.
                 html += pending.map(req => `
                     <div class="mx-auto my-3 w-[90%] bg-blue-50 border border-blue-200 p-3 rounded-xl shadow-sm">
                         <div class="text-center text-xs text-blue-800 font-bold mb-3 border-b border-blue-200 pb-2"><i class="fa-solid fa-user-plus mr-1"></i> درخواست پیوستن به گروه</div>
@@ -2128,12 +2480,12 @@ export function initializeLegacyApp() {
                 console.error('Unable to load permanent group messages or join requests:', e);
             }
         }
-        
+
         async function sendPermChatMessage() {
             const inp = $('perm-chat-input');
             const text = inp.value.trim();
             if (!text || !currentUser || !activePermGroupId) return;
-            
+
             try {
                 const res = await apiFetch(`${API_BASE}/perm_groups/${activePermGroupId}/messages`, {
                     method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -2204,15 +2556,18 @@ export function initializeLegacyApp() {
             startTravelerPolling();
             if (hamsafarOpen && bothFilled()) handleRoutingAction();
         }
-        
+
         function confirmLogout() {
             openConfirmModal('خروج از حساب', 'آیا از خروج از حساب کاربری اطمینان دارید؟', 'fa-right-from-bracket', 'خروج', async () => {
+                let serverLogoutConfirmed = false;
                 try {
                     const response = await apiFetch(`${API_BASE}/logout`, {method:'POST'});
-                    if (!response.ok) throw new Error('Logout request failed');
+                    serverLogoutConfirmed = response.ok || response.status === 401;
+                    if (!response.ok && response.status !== 401) {
+                        console.warn('Server logout returned', response.status);
+                    }
                 } catch (e) {
-                    showToast('خروج از حساب انجام نشد. اتصال به سرور را بررسی کنید.', 'error');
-                    return;
+                    console.warn('Server logout could not be reached:', e);
                 }
                 stopTravelerPolling();
                 Object.values(activeOutboundRequests).forEach(req => clearInterval(req.interval));
@@ -2239,11 +2594,14 @@ export function initializeLegacyApp() {
                 clearRoutes();
                 clearSearch();
                 renderHeaderAuth();
-                showToast('با موفقیت خارج شدید.', 'success');
+                showToast(
+                    serverLogoutConfirmed
+                        ? 'با موفقیت خارج شدید.'
+                        : 'از این دستگاه خارج شدید؛ وضعیت موقت پس از چند دقیقه پاک‌سازی می‌شود.',
+                    serverLogoutConfirmed ? 'success' : 'info'
+                );
             });
         }
-
-        // Refreshing a page is not logout; explicitly logging out ends temporary membership.
 
         queueMicrotask(() => {
             const ys = $('signup-year'); if(ys) { for (let y = 1300; y <= 1405; y++) { const o = document.createElement('option'); o.value = y; o.innerText = y; ys.appendChild(o); } }
@@ -2258,8 +2616,18 @@ export function initializeLegacyApp() {
                 }).catch(()=>{});
             }
             getGPS().then(loc => map.setView([loc.lat, loc.lng], 14)).catch(() => {});
+            
+            // Close the menu on outside clicks
+            document.addEventListener('click', function(e) {
+                ['chat-menu', 'info-menu', 'perm-chat-menu'].forEach(id => {
+                    const m = $(id);
+                    if (m && !m.classList.contains('hidden') && !e.target.closest('.relative')) {
+                        m.classList.add('hidden');
+                    }
+                });
+            });
         });
 
-  Object.assign(window, {map, apiFetch, backToTravelersList, bothFilled, cancelOrNevermind, cancelPlannedRequest, carLike, clearPersonMarkers, clearRoutes, clearSearch, closeAuthModal, closeConfirmModal, closeDirections, closeEditProfilePanel, closeGroupInfo, closeHamsafarPanel, closeMainMenu, closePermChat, closePermGroupDetail, closePermGroupsPanel, closeProfilePanel, closeStationWizard, confirmAddStationFinal, confirmLogout, convertToPermanentGroup, createPlannedRequest, defaultOptions, drawRoutes, editSaved, enableAddStationMode, fetchRoutes, finalizeLogin, fitTo, fmtCost, fmtDuration, getBox, getGPS, getPlanned, goToStationStep2, handleLogin, handleRoutingAction, handleSignup, hideBox, hideResultPanels, hideRouteSteps, hideSavedPlacesView, initializeLegacyApp, kickMember, leaveGroup, loadAcceptedRequests, loadChatMessages, loadGroupMembers, loadPermChatMessages, loadPermanentGroups, loadPlannedRequests, loadSaved, loadSavedStations, loadTravelersOnMap, locateMe, onPlacePicked, openAuthModal, openConfirmModal, openDirections, openEditProfilePanel, openGroupInfo, openHamsafarPanel, openMainMenu, openPermChat, openPermGroupDetail, openPermGroupsPanel, openProfilePanel, openStationStep1, openStationStep3, osrmBase, panTo, persistSaved, pickStationDest, pinIcon, pollIncomingRequests, publishTraveler, removePermMember, renderExtendedSavedList, renderHeaderAuth, renderIncomingRequestsUI, renderPlannedRequests, renderRoadPanel, renderSaved, renderSelectedTravelerPanel, respondToRequest, reverseGeocode, routeToSearched, saveGroupName, saveProfileChanges, savedClick, searchPlaces, selectRoute, selectedTravelDate, sendChatMessage, sendPermChatMessage, sendRideRequest, setPoint, setProfile, setRouteMode, setSearchPlace, shortName, showBoxItems, showRouteSteps, showSavedPlacesView, showToast, sortedRoutes, startPicking, startTravelerPolling, stopPicking, stopTravelerPolling, swapPoints, switchAuthTab, switchHTab, switchProfileTab, toggleGroupMenu, toggleGroupNameEdit, toggleMainMenu, toggleOtherVehicleInput, toggleProfileMenu, toggleScheduleMode, translateManeuver, updateAcceptedRequestsVisibility, updateControls, updateSidebarIcons, useMyLocation, viewRequests});
+  Object.assign(window, {map, apiFetch, backToTravelersList, bothFilled, cancelOrNevermind, cancelPlannedRequest, carLike, clearPersonMarkers, clearRoutes, clearSearch, closeAuthModal, closeConfirmModal, closeDirections, closeEditProfilePanel, closeGroupInfo, closeHamsafarPanel, closeMainMenu, closePermChat, closePermGroupDetail, closePermGroupsPanel, closeProfilePanel, closeStationWizard, confirmAddStationFinal, confirmLogout, convertToPermanentGroup, createPlannedRequest, defaultOptions, drawRoutes, editSaved, enableAddStationMode, fetchRoutes, finalizeLogin, fitTo, fmtCost, fmtDuration, getBox, getGPS, getPlanned, goToStationStep2, handleLogin, handleRoutingAction, handleSignup, hideBox, hideResultPanels, hideRouteSteps, hideSavedPlacesView, initializeLegacyApp, kickMember, leaveGroup, leavePermGroup, deletePermGroup, togglePermChatMenu, loadAcceptedRequests, loadChatMessages, loadGroupMembers, loadPermChatMessages, loadPermanentGroups, loadPlannedRequests, loadSaved, loadSavedStations, loadTravelersOnMap, locateMe, onPlacePicked, openAuthModal, openConfirmModal, openDirections, openEditProfilePanel, openGroupInfo, openHamsafarPanel, openMainMenu, openPermChat, openPermGroupDetail, openPermGroupsPanel, openProfilePanel, openStationStep1, openStationStep3, osrmBase, panTo, persistSaved, pickStationDest, pinIcon, pollIncomingRequests, publishTraveler, removePermMember, renderExtendedSavedList, renderHeaderAuth, renderIncomingRequestsUI, renderPlannedRequests, renderRoadPanel, renderSaved, renderSelectedTravelerPanel, respondToRequest, reverseGeocode, routeToSearched, saveGroupName, saveProfileChanges, savedClick, searchPlaces, selectRoute, selectedTravelDate, sendChatMessage, sendPermChatMessage, sendRideRequest, setPoint, setProfile, setRouteMode, setSearchPlace, shortName, showBoxItems, showRouteSteps, showSavedPlacesView, showToast, sortedRoutes, startPicking, startTravelerPolling, stopPicking, stopTravelerPolling, swapPoints, switchAuthTab, switchHTab, switchProfileTab, toggleGroupMenu, toggleGroupNameEdit, toggleMainMenu, toggleOtherVehicleInput, toggleProfileMenu, toggleScheduleMode, translateManeuver, updateAcceptedRequestsVisibility, updateControls, updateSidebarIcons, useMyLocation, viewRequests});
   return () => { if (activeTravelersInterval) clearInterval(activeTravelersInterval); map.remove(); };
 }

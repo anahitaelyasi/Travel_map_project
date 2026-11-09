@@ -107,3 +107,27 @@ test('logout waits for backend, and the old temporary group is not published aga
   assert.match(logout, /stopTravelerPolling\(\)/);
   assert.match(logout, /window\.myGroupMemberCount = 1/);
 });
+
+
+test('opening Hamsafar activates an already selected route and starts matching', () => {
+  const open = source.slice(source.indexOf('function openHamsafarPanel()'), source.indexOf('function closeHamsafarPanel()'));
+  assert.match(open, /if \(bothFilled\(\)\) \{[\s\S]*travelerSearchActive = true;[\s\S]*handleRoutingAction\(\);/);
+});
+
+test('live-search heartbeat is refreshed separately from route publishing', () => {
+  assert.match(source, /API_BASE\}\/travelers\/heartbeat/);
+  const polling = source.slice(source.indexOf('function startTravelerPolling()'), source.indexOf('function stopTravelerPolling()'));
+  assert.match(polling, /refreshTravelerPresence\(\)/);
+  assert.match(source, /lastPresenceHeartbeatAt >= 15000/);
+});
+
+
+test('logout always clears the local session when the API is expired or unreachable', () => {
+  const start = source.indexOf('function confirmLogout()');
+  const end = source.indexOf('queueMicrotask(() => {', start);
+  const logout = source.slice(start, end);
+  assert.match(logout, /serverLogoutConfirmed = response\.ok \|\| response\.status === 401/);
+  assert.ok(logout.indexOf('stopTravelerPolling();') > logout.indexOf('catch (e)'));
+  assert.ok(logout.indexOf("localStorage.removeItem('nimrahSessionToken')") > logout.indexOf('stopTravelerPolling();'));
+  assert.doesNotMatch(logout, /showToast\('خروج از حساب انجام نشد[\s\S]*?return;/);
+});

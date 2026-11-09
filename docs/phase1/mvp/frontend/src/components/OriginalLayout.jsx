@@ -439,8 +439,19 @@ export function PermanentGroupsPanel() {
 <span id="perm-chat-subtitle" className="text-[10px] text-gray-500"></span>
 </div>
 </div>
-<button className="text-gray-600 p-1.5 hover:bg-gray-100 rounded-full transition"><i className="fa-solid fa-ellipsis-vertical text-lg"></i></button>
-</div>
+<div class="relative">
+    <button onclick="togglePermChatMenu(event)" class="text-gray-600 p-1.5 hover:bg-gray-100 rounded-full transition">
+        <i class="fa-solid fa-ellipsis-vertical text-lg"></i>
+    </button>
+    <div id="perm-chat-menu" class="hidden absolute left-0 top-10 w-40 bg-white shadow-lg rounded-lg border border-gray-100 z-50 py-1">
+        <button onclick="leavePermGroup()" class="w-full text-right px-3 py-2 text-xs text-red-600 hover:bg-red-50 flex items-center gap-2">
+            <i class="fa-solid fa-arrow-right-from-bracket w-4 text-center"></i> ترک گروه
+        </button>
+        <button id="btn-delete-perm-group" onclick="deletePermGroup()" class="hidden w-full text-right px-3 py-2 text-xs text-red-600 hover:bg-red-50 items-center gap-2 border-t border-red-100 mt-1 pt-1">
+            <i class="fa-solid fa-trash w-4 text-center"></i> حذف گروه
+        </button>
+    </div>
+</div></div>
 <div id="perm-chat-messages" className="flex-1 overflow-y-auto hide-scroll bg-[#e5e5e5] p-3 space-y-3 flex flex-col">
 
 </div>
