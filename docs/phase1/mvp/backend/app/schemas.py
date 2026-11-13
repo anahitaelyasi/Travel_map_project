@@ -36,6 +36,8 @@ class TravelerUpsert(BaseModel):
     travel_mode: Literal['now', 'later'] = 'now'
     travel_date: str = ''
     travel_time: str = ''
+    # Start a fresh temporary matching group instead of reusing an old one.
+    new_search: bool = False
 
 class RequestCreate(BaseModel):
     sender_id: int

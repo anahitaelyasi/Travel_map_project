@@ -8,6 +8,17 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
     <style>
+        /* Custom Center Pin for Location Picking */
+        #center-pin {
+            display: none; position: absolute; top: 50%; left: 50%;
+            transform: translate(-50%, -100%); z-index: 1000; pointer-events: none;
+            transition: transform 0.1s;
+        }
+        #center-pin.dragging { transform: translate(-50%, -110%) scale(1.1); }
+        
+        /* Keep the search control anchored; opening side panels must not shift it. */
+        #search-wrap { right: 5rem; transition: none !important; }
+
         #map { position: absolute; inset: 0; z-index: 1; }
         #map.picking, #map.picking .leaflet-grab, #map.picking .leaflet-interactive { cursor: crosshair !important; }
         .suggest-box {
@@ -42,6 +53,320 @@
         
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+        /* Neshan-inspired add-place dialog */
+        .poi-overlay {
+            position: fixed; inset: 0; z-index: 9999; display: flex;
+            align-items: center; justify-content: center; padding: 18px;
+            background: rgba(20, 24, 28, .54); backdrop-filter: blur(1.5px);
+        }
+        .poi-sheet {
+            width: min(436px, 100%);
+            max-height: min(760px, calc(100dvh - 36px));
+            background: #fff;
+            border-radius: 15px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 18px 55px rgba(0,0,0,.22);
+            color: #171717;
+        }
+        .poi-header {
+            height: 59px; min-height: 59px; display: flex; align-items: center;
+            justify-content: space-between; padding: 0 20px; border-bottom: 1px solid #e5e5e5;
+        }
+        .poi-header h2 { font-size: 17px; font-weight: 700; margin: 0; }
+        .poi-back { width: 32px; height: 32px; display:flex; align-items:center; justify-content:center; color:#222; font-size:18px; }
+        .poi-header-spacer { width: 32px; }
+        .poi-body {
+            flex: 1 1 auto;
+            min-height: 0;
+            padding: 16px 16px 12px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+        }
+        .poi-public-note { min-height: 43px; border-radius: 9px; background: #f0f0f0; display:flex; align-items:center; justify-content:center; padding: 8px 12px; font-size: 12px; font-weight: 700; color:#222; }
+        .poi-field { display:flex; flex-direction:column; gap:6px; }
+        .poi-field label { font-size:12px; color:#777; font-weight:500; padding:0 2px; }
+        .poi-field label span { color:#888; }
+        .poi-field input, .poi-field textarea, .poi-select-wrap select {
+            width:100%; min-height:49px; border:1px solid #dedfe3; border-radius:9px;
+            background:#fff; padding: 11px 13px; color:#202124; font-size:13px; outline:none;
+            transition:border-color .15s, box-shadow .15s;
+        }
+        .poi-field textarea { min-height:62px; resize:vertical; line-height:1.8; }
+        .poi-field input:focus, .poi-field textarea:focus, .poi-select-wrap select:focus { border-color:#2781d7; box-shadow:0 0 0 3px rgba(39,129,215,.09); }
+        .poi-field input::placeholder, .poi-field textarea::placeholder { color:#a0a0a0; }
+        .poi-select-wrap { position:relative; }
+        .poi-select-wrap select { appearance:none; padding-left:38px; cursor:pointer; }
+        .poi-select-wrap i { position:absolute; left:14px; top:50%; transform:translateY(-50%); color:#777; pointer-events:none; font-size:13px; }
+        .poi-location-preview { position:relative; height:194px; min-height:194px; border-radius:10px; overflow:hidden; background:#a9aaa6; margin-top:1px; }
+        .poi-preview-map { position:absolute; inset:0; overflow:hidden; background:linear-gradient(135deg,#b7b9b4,#9fa29d); }
+        .poi-map-grid { position:absolute; inset:-35%; opacity:.45; transform:rotate(-13deg); background-image:linear-gradient(22deg,transparent 47%,#e4e3dc 48%,#e4e3dc 49%,transparent 50%),linear-gradient(112deg,transparent 46%,#deddd6 47%,#deddd6 48%,transparent 49%); background-size:74px 62px,88px 76px; }
+        .poi-map-roads { position:absolute; height:9px; background:#d8c4b4; border:2px solid #b99c88; border-left:0;border-right:0; opacity:.9; }
+        .poi-road-one { width:125%; left:-10%; top:37%; transform:rotate(-17deg); }
+        .poi-road-two { width:120%; left:-8%; top:68%; transform:rotate(24deg); height:7px; }
+        .poi-map-park { position:absolute; width:110px; height:70px; right:8%; top:9%; border-radius:48% 30% 40% 25%; background:#8da78f; opacity:.75; transform:rotate(-20deg); }
+        .poi-preview-pin { position:absolute; left:50%; top:43%; transform:translate(-50%,-50%); color:#d43e43; font-size:43px; filter:drop-shadow(0 3px 2px rgba(0,0,0,.2)); }
+        .poi-edit-location { position:absolute; bottom:13px; left:50%; transform:translateX(-50%); white-space:nowrap; background:#fff; color:#222; border-radius:24px; padding:9px 15px; font-size:11px; font-weight:700; box-shadow:0 3px 12px rgba(0,0,0,.2); }
+        .poi-edit-location i { margin-right:5px; }
+        .poi-extra-details { border-top:1px solid #eee; padding-top:12px; }
+        .poi-extra-details summary { display:flex; align-items:center; justify-content:space-between; cursor:pointer; list-style:none; font-size:12px; font-weight:700; padding:2px 3px; }
+        .poi-extra-details summary::-webkit-details-marker { display:none; }
+        .poi-extra-details[open] summary i { transform:rotate(180deg); }
+        .poi-extra-details summary i { color:#777; transition:transform .2s; }
+        .poi-extra-content { padding-top:14px; display:flex; flex-direction:column; gap:12px; }
+        .poi-extra-content .poi-field input { min-height:42px; font-size:12px; }
+
+        /* Photo upload section */
+        .poi-photo-section {
+            border: 1px solid #e8eaee;
+            border-radius: 12px;
+            padding: 13px;
+            background: #fff;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .poi-photo-heading {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
+
+        .poi-photo-heading h4 {
+            margin: 0;
+            color: #222;
+            font-size: 12px;
+            font-weight: 700;
+        }
+
+        .poi-photo-heading p {
+            margin: 5px 0 0;
+            color: #888;
+            font-size: 10px;
+            line-height: 1.8;
+        }
+
+        .poi-photo-icon {
+            width: 36px;
+            height: 36px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 10px;
+            color: #2878cf;
+            background: #edf5ff;
+            font-size: 17px;
+        }
+
+        .poi-photo-add {
+            align-self: flex-start;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 9px 15px;
+            border: 1px solid #dce8f7;
+            border-radius: 22px;
+            background: #f8fbff;
+            color: #176fc5;
+            font-size: 11px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: background .15s, border-color .15s;
+        }
+
+        .poi-photo-add:hover {
+            background: #edf5ff;
+            border-color: #b8d5f6;
+        }
+
+        .poi-photo-preview {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(66px, 1fr));
+            gap: 8px;
+        }
+
+        .poi-photo-thumb {
+            position: relative;
+            height: 70px;
+            overflow: hidden;
+            border-radius: 9px;
+            background: #f1f3f5;
+            border: 1px solid #e5e7eb;
+        }
+
+        .poi-photo-thumb img {
+            display: block;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .poi-photo-remove {
+            position: absolute;
+            top: 4px;
+            left: 4px;
+            width: 21px;
+            height: 21px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 0;
+            background: rgba(17,24,39,.78);
+            color: white;
+            font-size: 10px;
+            cursor: pointer;
+        }
+
+        .poi-photo-hint {
+            margin: 0;
+            color: #999;
+            font-size: 10px;
+        }
+
+        /* Business owner card */
+        .poi-owner-check {
+            position: relative;
+            display: flex;
+            align-items: flex-start;
+            gap: 11px;
+            padding: 13px;
+            border: 1px solid #e8eaee;
+            background: #f8f9fb;
+            border-radius: 12px;
+            cursor: pointer;
+        }
+
+        .poi-owner-check input {
+            accent-color: #1976d2;
+            width: 16px;
+            height: 16px;
+            margin-top: 2px;
+        }
+
+        .poi-owner-copy {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        .poi-owner-copy strong {
+            color: #333;
+            font-size: 12px;
+        }
+
+        .poi-owner-copy small {
+            color: #777;
+            font-size: 10px;
+            line-height: 1.8;
+        }
+
+        .poi-owner-illustration {
+            width: 52px;
+            height: 52px;
+            flex: 0 0 52px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 12px;
+            background: #e9f2ff;
+            color: #2878cf;
+            font-size: 24px;
+        }
+
+        .poi-hours-block { border:1px solid #ececec; border-radius:9px; padding:12px; display:flex; flex-direction:column; gap:10px; }
+        .poi-hours-title { font-size:12px; font-weight:700; }
+        .poi-hours-title i { color:#888; margin-left:6px; }
+        .poi-24-label { display:flex; align-items:center; gap:8px; font-size:12px; color:#555; }
+        .poi-24-label input { accent-color:#1976d2; width:16px; height:16px; }
+        .poi-time-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+        .poi-time-grid input { min-height:39px; border:1px solid #dedfe3; border-radius:7px; padding:7px 9px; }
+        .poi-footer {
+            display: flex;
+            direction: ltr;
+            flex: 0 0 auto;
+            gap: 10px;
+            padding: 13px 16px 16px;
+            border-top: 1px solid #eee;
+            background: #fff;
+        }
+        .poi-footer button {
+            flex: 1;
+            height: 47px;
+            border-radius: 28px;
+            font-size: 13px;
+            font-weight: 700;
+            direction: rtl;
+        }
+        .poi-submit { background:#1976d2; color:#fff; }
+        .poi-submit:hover { background:#1268bd; }
+        .poi-cancel { background:#fff; border:1px solid #e0e2e6; color:#222; }
+        .poi-cancel:hover { background:#f8f8f8; }
+
+        /* Custom working-hours editor */
+        .hours-overlay {
+            position:fixed; inset:0; z-index:10010; display:none; align-items:center;
+            justify-content:center; padding:16px; background:rgba(15,23,42,.48);
+            backdrop-filter:blur(4px);
+        }
+        .hours-dialog {
+            width:min(440px,100%); max-height:min(760px,90dvh); background:#fff;
+            border:1px solid #edf0f4; border-radius:22px; overflow:hidden;
+            box-shadow:0 24px 70px rgba(15,23,42,.24); display:flex; flex-direction:column;
+        }
+        .hours-dialog-header { display:flex; align-items:center; justify-content:space-between; padding:16px 18px; border-bottom:1px solid #edf0f4; }
+        .hours-dialog-title { font-size:16px; font-weight:800; color:#172033; }
+        .hours-primary-btn { background:#1976d2; color:white; border-radius:999px; padding:9px 23px; font-size:13px; font-weight:800; transition:background .15s; }
+        .hours-primary-btn:hover { background:#1268bd; }
+        .hours-dialog-body { padding:14px; overflow:auto; display:flex; flex-direction:column; gap:10px; }
+        .hours-day-row { width:100%; display:flex; align-items:center; justify-content:space-between; gap:12px; padding:13px 14px; border:1px solid #e8ebf0; border-radius:14px; background:#fff; text-align:right; transition:border-color .15s,background .15s,transform .15s; }
+        .hours-day-row:hover { border-color:#b9d8fb; background:#f8fbff; transform:translateY(-1px); }
+        .hours-day-name { color:#202938; font-size:13px; font-weight:800; }
+        .hours-day-value { margin-top:4px; color:#7b8492; font-size:11px; }
+        .hours-day-value.is-open { color:#16845b; }
+        .hours-row-chevron { color:#9aa3af; font-size:11px; }
+        .hours-allday-card { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; padding:15px; border:1px solid #e5e9ef; border-radius:16px; background:#fafbfc; cursor:pointer; transition:.15s; }
+        .hours-allday-card.active { border-color:#7db8f5; background:#f0f7ff; }
+        .hours-check { width:20px; height:20px; flex:0 0 20px; border:1px solid #cbd2dc; border-radius:6px; display:flex; align-items:center; justify-content:center; color:#fff; font-size:11px; }
+        .hours-allday-card.active .hours-check { border-color:#1976d2; background:#1976d2; }
+        .hours-card-title { color:#202938; font-size:13px; font-weight:800; }
+        .hours-card-description { color:#7b8492; font-size:11px; line-height:1.8; margin-top:4px; }
+        .hours-day-editor { z-index:10020; }
+        .hours-editor-content { padding:18px; display:flex; flex-direction:column; gap:17px; }
+        .hours-status-switch { display:grid; grid-template-columns:1fr 1fr; gap:5px; padding:4px; border-radius:13px; background:#f1f3f6; }
+        .hours-status-switch button { padding:10px 8px; border-radius:10px; color:#687386; font-size:12px; font-weight:800; }
+        .hours-status-switch button.active { background:#fff; color:#1976d2; box-shadow:0 1px 5px rgba(15,23,42,.1); }
+        .hours-time-fields { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+        .hours-time-fields label { display:block; margin-bottom:6px; color:#697386; font-size:11px; font-weight:700; }
+        .hours-time-fields input { width:100%; min-height:44px; padding:8px 10px; border:1px solid #dfe4eb; border-radius:11px; background:#fff; color:#202938; }
+        .hours-apply-all { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:12px 13px; border:1px solid #e6eaf0; border-radius:12px; color:#475164; font-size:12px; cursor:pointer; }
+        .hours-apply-all input { width:16px; height:16px; accent-color:#1976d2; }
+        .hours-dialog-footer { display:flex; gap:10px; padding:13px 16px 16px; border-top:1px solid #edf0f4; }
+        .hours-dialog-footer button { flex:1; min-height:43px; border-radius:13px; font-size:13px; font-weight:800; }
+        .hours-cancel-btn { background:#f2f4f7; color:#475164; }
+        .hours-summary-button { width:100%; display:flex; align-items:center; justify-content:space-between; gap:12px; padding:13px 14px; border:1px solid #e5e8ed; border-radius:12px; background:#fff; text-align:right; transition:.15s; }
+        .hours-summary-button:hover { border-color:#b9d8fb; background:#f8fbff; }
+        .hours-summary-icon { width:38px; height:38px; display:flex; align-items:center; justify-content:center; border-radius:12px; color:#1976d2; background:#edf6ff; }
+        .hours-summary-title { color:#202938; font-size:12px; font-weight:800; }
+        .hours-summary-value { margin-top:4px; color:#7b8492; font-size:11px; }
+        @media (max-width:520px) {
+            .hours-overlay { padding:10px; }
+            .hours-dialog { max-height:86dvh; border-radius:19px; }
+        }
+
+        @media (max-width: 520px) {
+            .poi-overlay { padding:0; align-items:flex-end; }
+            .poi-sheet { width:100%; max-height:94dvh; border-radius:16px 16px 0 0; }
+            .poi-body { padding:14px 14px 10px; gap:12px; }
+            .poi-location-preview { height:165px; min-height:165px; }
+        }
     </style>
 </head>
 <body class="h-screen overflow-hidden font-sans bg-gray-100">
@@ -50,6 +375,24 @@
 
     <!-- MAP (full screen) -->
     <div id="map"></div>
+
+    <!-- CENTER PIN OVERLAY -->
+    <div id="center-pin">
+        <i class="fa-solid fa-location-dot text-5xl text-red-500 drop-shadow-xl"></i>
+        <div class="w-4 h-1.5 bg-black/30 rounded-[100%] absolute -bottom-1 left-1/2 -translate-x-1/2 blur-[1px]"></div>
+    </div>
+
+    <!-- FLOATING CONFIRM BAR (Neshan Style) -->
+    <div id="poi-picker-bar" class="hidden fixed bottom-6 left-1/2 -translate-x-1/2 z-[2000] w-[90%] max-w-md bg-white rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] p-4 flex flex-col gap-4 border border-gray-100">
+        <div class="flex items-center justify-center gap-2 text-blue-600 font-bold text-sm">
+            <i class="fa-solid fa-arrows-up-down-left-right"></i>
+            <span>نقشه را جابه‌جا کنید تا نشانگر روی محل دقیق قرار گیرد.</span>
+        </div>
+        <div class="flex gap-3">
+            <button onclick="cancelPoiPicker()" class="flex-1 bg-white hover:bg-gray-50 border border-gray-200 text-gray-700 font-bold py-3.5 rounded-xl transition text-sm shadow-sm">انصراف</button>
+            <button onclick="confirmPoiLocation()" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 rounded-xl shadow-md transition text-sm">تایید موقعیت</button>
+        </div>
+    </div>
 
     <!-- RIGHT RAIL -->
     <nav class="fixed top-0 right-0 bottom-0 w-16 bg-white z-40 border-l border-gray-200 shadow flex flex-col items-center py-4 gap-5">
@@ -69,9 +412,7 @@
     </nav>
 
     <!-- MAIN MENU PANEL -->
-    <!-- UPGRADED: Added absolute top-16 to sit below the search bar like in the image -->
     <aside id="main-menu-panel" class="hidden fixed top-0 bottom-0 right-16 w-[320px] max-w-[calc(100vw-4rem)] bg-white z-40 shadow-2xl overflow-y-auto slim-scroll border-l border-gray-200 flex-col">
-        <!-- UPGRADED: Cleaned header to match screenshot 2 style -->
         <div class="flex items-center justify-between p-4 border-b border-gray-100 shadow-sm shrink-0 bg-white">
             <div class="flex items-center gap-2 text-blue-600 font-bold">
                 <i class="fa-solid fa-map-location-dot text-xl"></i>
@@ -81,7 +422,7 @@
         </div>
         
         <div class="flex-1 py-2">
-            <button onclick="enableAddStationMode(); closeMainMenu();" class="w-full flex items-center gap-3 px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 transition text-right font-medium">
+            <button onclick="startPoiPicker();" class="w-full flex items-center gap-3 px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 transition text-right font-medium">
                 <i class="fa-solid fa-location-crosshairs text-gray-400 w-5 text-center text-lg"></i>
                 افزودن مکانی که در نقشه نیست
             </button>
@@ -109,7 +450,6 @@
     </aside>
 
     <!-- SINGLE SEARCH BAR -->
-    <!-- z-30 keeps the search bar below every side panel (they are z-40/z-50), so any open panel covers it -->
     <div id="search-wrap" class="fixed top-4 right-[5rem] z-30">
         <div class="relative w-[460px] max-w-[calc(100vw-6rem)]">
             <div class="bg-white rounded-full shadow-lg flex items-center px-2 h-12 gap-1">
@@ -241,7 +581,6 @@
     </aside>
 
     <!-- STANDARD ROUTING PANEL -->
-    <!-- UPGRADED: Added absolute top-16 to sit below search bar like the other panels -->
     <aside id="dir-panel" class="hidden fixed top-0 bottom-0 right-16 w-[420px] max-w-[calc(100vw-4rem)] bg-white z-40 shadow-2xl overflow-hidden border-l border-gray-200">
         <div id="route-selection-view" class="h-full overflow-y-auto slim-scroll p-4 space-y-4">
             <div class="flex items-center justify-between">
@@ -323,8 +662,7 @@
         </div>
     </aside>
 
-    <!-- NEW HAMSAFAR PANEL (Standalone Feature) -->
-    <!-- UPGRADED: Added absolute top-16 -->
+    <!-- NEW HAMSAFAR PANEL -->
     <aside id="hamsafar-panel" class="hidden fixed top-0 bottom-0 right-16 w-[420px] max-w-[calc(100vw-4rem)] bg-white z-40 shadow-2xl overflow-hidden border-l border-gray-200 flex-col">
         <div class="p-4 border-b border-gray-100 flex items-center justify-between shadow-sm shrink-0 bg-white">
             <h2 class="font-bold text-gray-800 text-base text-center w-full justify-center">همسفر</h2>
@@ -353,7 +691,6 @@
                     <button onclick="swapPoints()" class="p-2 text-gray-600 hover:text-blue-600"><i class="fa-solid fa-arrow-right-arrow-left rotate-90 text-lg"></i></button>
                 </div>
                 
-                <!-- Schedule Toggle Area -->
                 <div class="mt-1 pt-2 border-t border-gray-100">
                     <div class="flex bg-gray-100 p-1 rounded-lg">
                         <button id="btn-time-now" onclick="toggleScheduleMode('now')" class="flex-1 text-[11px] font-bold py-1.5 rounded-md bg-white shadow text-blue-600 transition">همین الان</button>
@@ -466,7 +803,6 @@
     </aside>
 
     <!-- PERMANENT GROUPS PANEL -->
-    <!-- UPGRADED: Added absolute top-16 -->
     <aside id="groups-panel" class="hidden fixed top-0 bottom-0 right-16 w-[420px] max-w-[calc(100vw-4rem)] bg-white z-40 shadow-2xl overflow-hidden border-l border-gray-200 flex-col">
         <!-- List View -->
         <div id="perm-groups-list-view" class="flex flex-col h-full bg-white">
@@ -611,6 +947,210 @@
         </div>
     </div>
 
+    <!-- NESHAN-STYLE ADD PLACE MODAL -->
+    <div id="poi-modal" class="poi-overlay" style="display:none;">
+        <section class="poi-sheet" role="dialog" aria-modal="true" aria-labelledby="poi-modal-title">
+            <header class="poi-header">
+                <button type="button" onclick="closePoiModal()" class="poi-back" aria-label="بازگشت">
+                    <i class="fa-solid fa-arrow-right"></i>
+                </button>
+                <h2 id="poi-modal-title">افزودن مکان</h2>
+                <span class="poi-header-spacer"></span>
+            </header>
+
+            <div class="poi-body slim-scroll">
+                <div class="poi-public-note">این مکان به صورت عمومی منتشر می‌شود</div>
+
+                <div class="poi-field">
+                    <label for="poi-name">نام مکان <span>(ضروری)</span></label>
+                    <input type="text" id="poi-name" placeholder="مثلاً: مرکز خرید یا فروشگاه" autocomplete="off">
+                </div>
+
+                <div class="poi-field">
+                    <label for="poi-category">دسته‌بندی <span>(ضروری)</span></label>
+                    <div class="poi-select-wrap">
+                        <select id="poi-category">
+                            <option value="">انتخاب دسته‌بندی</option>
+                            <option value="station">ایستگاه همسفری / تاکسی</option>
+                            <option value="university">دانشکده / ساختمان دانشگاه</option>
+                            <option value="dorm">خوابگاه</option>
+                            <option value="business">کسب‌وکار / فروشگاه</option>
+                            <option value="shopping">بازار و مرکز خرید</option>
+                            <option value="restaurant">رستوران و کافه</option>
+                            <option value="service">خدمات عمومی</option>
+                        </select>
+                        <i class="fa-solid fa-chevron-left"></i>
+                    </div>
+                </div>
+
+                <div class="poi-field">
+                    <label for="poi-address">آدرس <span>(ضروری)</span></label>
+                    <textarea id="poi-address" rows="2" placeholder="نشانی دقیق مکان را وارد کنید"></textarea>
+                </div>
+
+                <div class="poi-location-preview">
+                    <div class="poi-preview-map" aria-label="پیش‌نمایش موقعیت انتخاب‌شده روی نقشه">
+                        <div class="poi-map-grid"></div>
+                        <div class="poi-map-roads poi-road-one"></div>
+                        <div class="poi-map-roads poi-road-two"></div>
+                        <div class="poi-map-park"></div>
+                        <i class="fa-solid fa-location-dot poi-preview-pin"></i>
+                    </div>
+                    <button type="button" onclick="editPoiLocation()" class="poi-edit-location">
+                        تغییر موقعیت مکان روی نقشه <i class="fa-solid fa-pen"></i>
+                    </button>
+                </div>
+
+                <details id="poi-extra-details" class="poi-extra-details" open>
+                    <summary>
+                        <span>اطلاعات تکمیلی مکان</span>
+                        <i class="fa-solid fa-chevron-down"></i>
+                    </summary>
+                    <div class="poi-extra-content">
+                        <div class="poi-field">
+                            <label for="poi-phone">شماره تماس</label>
+                            <input type="text" id="poi-phone" placeholder="شماره تماس" dir="ltr">
+                        </div>
+                        <div class="poi-field">
+                            <label for="poi-insta">اینستاگرام</label>
+                            <input type="text" id="poi-insta" placeholder="@username" dir="ltr">
+                        </div>
+                        <div class="poi-field">
+                            <label for="poi-web">وب‌سایت</label>
+                            <input type="text" id="poi-web" placeholder="www.example.com" dir="ltr">
+                        </div>
+                        <button type="button" class="hours-summary-button" onclick="openHoursModal()" aria-haspopup="dialog">
+                            <span class="flex items-center gap-3">
+                                <span class="hours-summary-icon"><i class="fa-regular fa-clock"></i></span>
+                                <span>
+                                    <span class="hours-summary-title block">ساعت کاری</span>
+                                    <span id="poi-hours-preview" class="hours-summary-value block">برای تنظیم روزها انتخاب کنید</span>
+                                </span>
+                            </span>
+                            <i class="fa-solid fa-chevron-left text-gray-400 text-xs"></i>
+                        </button>
+                        <input type="hidden" id="poi-working-hours" value="">
+
+                        <!-- Add photos to the place -->
+                        <section class="poi-photo-section">
+                            <div class="poi-photo-heading">
+                                <div>
+                                    <h4>افزودن عکس به مکان</h4>
+                                    <p>تصاویر واقعی از نمای بیرونی، داخل یا تابلو مکان اضافه کنید.</p>
+                                </div>
+                                <span class="poi-photo-icon">
+                                    <i class="fa-regular fa-images"></i>
+                                </span>
+                            </div>
+
+                            <input
+                                type="file"
+                                id="poi-photo-input"
+                                accept="image/*"
+                                multiple
+                                hidden
+                                onchange="handlePlacePhotoSelection(this.files)"
+                            >
+
+                            <button type="button"
+                                    class="poi-photo-add"
+                                    onclick="$('poi-photo-input').click()">
+                                <i class="fa-solid fa-camera"></i>
+                                <span>افزودن عکس</span>
+                            </button>
+
+                            <div id="poi-photo-preview" class="poi-photo-preview"></div>
+
+                            <p class="poi-photo-hint">
+                                حداکثر ۵ عکس، هر عکس تا ۸ مگابایت
+                            </p>
+                        </section>
+
+                        <!-- Business owner checkbox -->
+                        <label class="poi-owner-check" for="poi-is-owner">
+                            <input type="checkbox" id="poi-is-owner">
+
+                            <span class="poi-owner-copy">
+                                <strong>مالک این کسب‌وکار هستم</strong>
+                                <small>
+                                    با تأیید مالکیت، در آینده می‌توانید اطلاعات این مکان
+                                    را مدیریت و به‌روزرسانی کنید.
+                                </small>
+                            </span>
+
+                            <span class="poi-owner-illustration">
+                                <i class="fa-solid fa-store"></i>
+                            </span>
+                        </label>
+
+                    </div>
+                </details>
+            </div>
+
+            <footer class="poi-footer">
+                <button type="button" onclick="submitPoiForm()" class="poi-submit">ثبت</button>
+                <button type="button" onclick="closePoiModal()" class="poi-cancel">انصراف</button>
+            </footer>
+        </section>
+    </div>
+
+    <!-- WORKING HOURS: weekly overview -->
+    <div id="hours-modal" class="hours-overlay" role="dialog" aria-modal="true" aria-labelledby="hours-modal-title">
+        <section class="hours-dialog">
+            <header class="hours-dialog-header">
+                <button type="button" class="hours-primary-btn" onclick="saveHoursModal()">ذخیره</button>
+                <div class="flex items-center gap-3">
+                    <h3 id="hours-modal-title" class="hours-dialog-title">تنظیم ساعت کاری</h3>
+                    <button type="button" onclick="closeHoursModal()" class="text-gray-500 hover:text-gray-900" aria-label="بازگشت">
+                        <i class="fa-solid fa-arrow-right"></i>
+                    </button>
+                </div>
+            </header>
+            <div class="hours-dialog-body slim-scroll">
+                <p class="text-xs text-gray-500 leading-6 px-1">برای هر روز، وضعیت و بازه زمانی فعالیت را جداگانه مشخص کنید.</p>
+                <div id="hours-days-list" class="flex flex-col gap-2"></div>
+                <button type="button" id="hours-247-card" class="hours-allday-card" onclick="toggle24Hours()">
+                    <span>
+                        <span class="hours-card-title block">فعال در تمام ساعات هفته</span>
+                        <span class="hours-card-description block">با فعال‌کردن این گزینه، مکان در تمام روزهای هفته به‌صورت شبانه‌روزی باز خواهد بود.</span>
+                    </span>
+                    <span class="hours-check" id="hours-247-check"><i class="fa-solid fa-check" id="hours-247-icon" style="display:none"></i></span>
+                </button>
+            </div>
+        </section>
+    </div>
+
+    <!-- WORKING HOURS: individual day editor -->
+    <div id="hours-day-modal" class="hours-overlay hours-day-editor" role="dialog" aria-modal="true" aria-labelledby="day-editor-title">
+        <section class="hours-dialog" style="width:min(390px,100%);">
+            <header class="hours-dialog-header">
+                <button type="button" onclick="closeDayHoursModal()" class="text-gray-500 hover:text-gray-900" aria-label="بستن"><i class="fa-solid fa-xmark"></i></button>
+                <h3 id="day-editor-title" class="hours-dialog-title">تنظیم روز</h3>
+            </header>
+            <div class="hours-editor-content">
+                <div class="hours-status-switch">
+                    <button type="button" id="day-status-open" onclick="setDayStatus('open')">باز است</button>
+                    <button type="button" id="day-status-closed" onclick="setDayStatus('closed')">تعطیل است</button>
+                </div>
+                <div id="day-time-wrap">
+                    <div class="hours-time-fields" dir="ltr">
+                        <div><label for="day-start-time" dir="rtl">شروع فعالیت</label><input type="time" id="day-start-time" value="08:30"></div>
+                        <div><label for="day-end-time" dir="rtl">پایان فعالیت</label><input type="time" id="day-end-time" value="17:00"></div>
+                    </div>
+                    <p class="text-[11px] text-amber-700 mt-3 leading-6">اگر ساعت پایان از ساعت شروع زودتر باشد، بازه به‌عنوان فعالیتی که تا روز بعد ادامه دارد در نظر گرفته می‌شود.</p>
+                </div>
+                <label class="hours-apply-all">
+                    <span>اعمال همین تنظیم روی تمام روزهای هفته</span>
+                    <input type="checkbox" id="apply-all-days">
+                </label>
+            </div>
+            <footer class="hours-dialog-footer">
+                <button type="button" class="hours-primary-btn" onclick="saveDayHours()">ذخیره تنظیمات</button>
+                <button type="button" class="hours-cancel-btn" onclick="closeDayHoursModal()">انصراف</button>
+            </footer>
+        </section>
+    </div>
+
     <!-- AUTH MODAL -->
     <div id="auth-modal" style="display:none;position:fixed;inset:0;background-color:rgba(0,0,0,.5);z-index:9999;align-items:center;justify-content:center;backdrop-filter:blur(4px);">
         <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 relative border border-gray-100 mx-4">
@@ -668,7 +1208,7 @@
 
     <script>
         // ---------- API & Helpers ----------
-        const API_BASE = 'http://localhost:3000/api';
+        const API_BASE = 'http://127.0.0.1:8000/api';
         const $ = id => document.getElementById(id);
         const fa = n => Number(n).toLocaleString('fa-IR');
         const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -726,7 +1266,9 @@
         let currentUser = null;
         let pickMode = null;                 
         
-        let pendingStationData = {};
+        // New POI Wizard State
+        let pendingPoiLocation = null;
+        
         let rawRoutes = [], rawKey = '', selectedRoute = 0, routeLayers = [];
         let personMarkers = [], requestActive = false;
         let searchMarker = null, searchPlace = null, lastFocused = null;
@@ -944,7 +1486,6 @@
         function routeToSearched() { map.closePopup(); openDirections(searchPlace); }
 
         // ---------- Panels open / close ----------
-        // ---------- Panels open / close ----------
         function toggleMainMenu() {
             if (mainMenuOpen) closeMainMenu();
             else openMainMenu();
@@ -959,7 +1500,7 @@
             mainMenuOpen = true;
             $('main-menu-panel').classList.remove('hidden');
             $('main-menu-panel').classList.add('flex');
-
+            
             updateSidebarIcons();
         }
         
@@ -967,7 +1508,7 @@
             mainMenuOpen = false;
             $('main-menu-panel').classList.add('hidden');
             $('main-menu-panel').classList.remove('flex');
-
+            
             updateSidebarIcons();
         }
 
@@ -1124,9 +1665,6 @@
             const mode = pickMode;
             stopPicking();
             
-            if (mode === 'station-origin') { pendingStationData.origin = e.latlng; openStationStep1(); return; }
-            if (mode === 'station-dest') { pendingStationData.dest = e.latlng; openStationStep3(); return; }
-            
             if (mode.startsWith('save-')) {
                 const key = mode.slice(5);
                 saved[key] = { lat: e.latlng.lat, lng: e.latlng.lng, label: await reverseGeocode(e.latlng.lat, e.latlng.lng) };
@@ -1238,71 +1776,433 @@
             hideSavedPlacesView();
         }
 
-        // ---------- Station Wizard ----------
-        function enableAddStationMode() { 
-            if (!currentUser) { showToast('برای افزودن ایستگاه ابتدا باید وارد حساب کاربری شوید.', 'error'); openAuthModal('login'); return; }
-            pendingStationData = {}; startPicking('station-origin'); 
+        // ---------- Add-place flow ----------
+        // Opening "Add place" now shows the redesigned form immediately.
+        // Map picking is an optional action launched from the form's location button.
+        let poiReturningToModal = false;
+
+        function resetPoiForm() {
+            $('poi-name').value = '';
+            $('poi-category').value = '';
+            if ($('poi-address')) $('poi-address').value = '';
+            $('poi-phone').value = '';
+            $('poi-insta').value = '';
+            $('poi-web').value = '';
+            const ownerCheckbox = $('poi-is-owner');
+            if (ownerCheckbox) ownerCheckbox.checked = false;
+
+            const extraDetails = $('poi-extra-details');
+            if (extraDetails) extraDetails.open = true;
+
+            resetPlacePhotos();
+            poiHoursState = createDefaultHoursState();
+            hoursBefore24h = null;
+            activeHoursDay = null;
+            pendingDayStatus = 'closed';
+            renderHoursPreview();
         }
-        function openStationStep1() {
-            $('station-step1').classList.remove('hidden'); $('station-step2').classList.add('hidden'); $('station-step3').classList.add('hidden');
-            const checkedRadio = document.querySelector('input[name="vehicle-type"]:checked'); if(checkedRadio) checkedRadio.checked = false;
-            $('vehicle-other-input').value = ''; $('vehicle-other-input').classList.add('hidden');
-            $('station-wizard-modal').style.display = 'flex';
-        }
-        function toggleOtherVehicleInput() {
-            const val = document.querySelector('input[name="vehicle-type"]:checked')?.value;
-            if (val === 'other') { $('vehicle-other-input').classList.remove('hidden'); $('vehicle-other-input').focus(); } else { $('vehicle-other-input').classList.add('hidden'); }
-        }
-        function goToStationStep2() {
-            const val = document.querySelector('input[name="vehicle-type"]:checked')?.value;
-            if (!val) { showToast('لطفاً نوع وسیله نقلیه را انتخاب کنید.', 'error'); return; }
-            if (val === 'other' && !$('vehicle-other-input').value.trim()) { showToast('لطفاً نوع وسیله نقلیه را تایپ کنید.', 'error'); return; }
-            pendingStationData.vehicleType = val === 'other' ? $('vehicle-other-input').value.trim() : val;
-            $('station-step1').classList.add('hidden'); $('station-step2').classList.remove('hidden');
-        }
-        function pickStationDest() { $('station-wizard-modal').style.display = 'none'; startPicking('station-dest'); }
-        function openStationStep3() {
-            $('station-step1').classList.add('hidden'); $('station-step2').classList.add('hidden'); $('station-step3').classList.remove('hidden');
-            $('station-fare').value = ''; for(let i=1; i<=3; i++) { $(`time-start-${i}`).value = ''; $(`time-end-${i}`).value = ''; }
-            $('station-wizard-modal').style.display = 'flex';
-        }
-        async function confirmAddStationFinal() {
-            const fare = $('station-fare').value.trim();
-            if (!fare) { showToast('لطفاً کرایه حدودی را تعیین کنید.', 'error'); return; }
-            pendingStationData.fare = fare;
-            const times = [];
-            for(let i=1; i<=3; i++) {
-                const start = $(`time-start-${i}`).value, end = $(`time-end-${i}`).value;
-                if (start || end) { times.push(`از ${start ? esc(start) : '...'} تا ${end ? esc(end) : '...'}`); }
+
+        function startPoiPicker() {
+            if (!currentUser) {
+                showToast('برای افزودن مکان ابتدا باید وارد حساب کاربری شوید.', 'error');
+                openAuthModal('login');
+                return;
             }
-            const nameMap = { 'yellow-taxi': 'تاکسی زرد', 'personal-taxi': 'تاکسی شخصی', 'bus': 'اتوبوس', 'van': 'ون / مینی‌بوس' };
-            const vName = nameMap[pendingStationData.vehicleType] || pendingStationData.vehicleType;
-            
-            let popupHtml = `<div class="text-right p-1"><b class="text-emerald-700 text-sm mb-1 block">ایستگاه ${esc(vName)}</b>`;
-            popupHtml += `<div class="text-xs text-gray-700 mb-2 font-medium">کرایه حدودی: ${fa(fare)} تومان</div>`;
-            if (times.length > 0) { popupHtml += `<div class="text-[10px] text-gray-500 mb-1 border-t pt-1">ساعات حضور:</div><ul class="text-[10px] text-gray-600 space-y-0.5">` + times.map(t => `<li>- ${t}</li>`).join('') + `</ul>`; }
-            popupHtml += `</div>`;
-            
-            const originMarker = L.marker(pendingStationData.origin, { icon: pinIcon('#059669', 'fa-map-pin') }).addTo(map).bindPopup(popupHtml);
-            originMarker.on('popupopen', async () => {
-                activeStationExtras.clearLayers();
-                const destIcon = L.divIcon({ className: 'pin', html: `<div style="background:#ef4444;width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:white;box-shadow:0 2px 4px rgba(0,0,0,.3);"><i class="fa-solid fa-flag-checkered text-[10px]"></i></div>`, iconSize: [24, 24] });
-                L.marker(pendingStationData.dest, {icon: destIcon}).bindPopup(`مقصد تقریبی خط ${esc(vName)}`).addTo(activeStationExtras);
-                try {
-                    const s = pendingStationData.origin, d = pendingStationData.dest;
-                    const res = await fetch(`https://router.project-osrm.org/route/v1/driving/${s.lng},${s.lat};${d.lng},${d.lat}?overview=full&geometries=geojson`);
-                    const data = await res.json();
-                    if (data.code === 'Ok' && data.routes.length > 0) {
-                        const coords = data.routes[0].geometry.coordinates.map(c => [c[1], c[0]]);
-                        L.polyline(coords, { color: '#059669', weight: 4, dashArray: '6, 6' }).addTo(activeStationExtras);
-                    } else { L.polyline([s, d], { color: '#059669', weight: 4, dashArray: '6, 6' }).addTo(activeStationExtras); }
-                } catch (e) { L.polyline([pendingStationData.origin, pendingStationData.dest], { color: '#059669', weight: 4, dashArray: '6, 6' }).addTo(activeStationExtras); }
-            });
-            originMarker.on('popupclose', () => { activeStationExtras.clearLayers(); });
-            showToast('ایستگاه جدید با موفقیت ثبت شد.', 'success');
-            closeStationWizard();
+            closeMainMenu();
+            const center = map.getCenter();
+            pendingPoiLocation = { lat: center.lat, lng: center.lng };
+            resetPoiForm();
+            $('poi-modal').style.display = 'flex';
         }
-        function closeStationWizard() { $('station-wizard-modal').style.display = 'none'; pendingStationData = {}; }
+
+        function beginPoiMapSelection() {
+            poiReturningToModal = true;
+            closePoiModal();
+            $('center-pin').style.display = 'block';
+            $('poi-picker-bar').classList.remove('hidden');
+            $('poi-picker-bar').classList.add('flex');
+            map.on('movestart', animatePinUp);
+            map.on('moveend', animatePinDown);
+        }
+
+        function animatePinUp() { $('center-pin').classList.add('dragging'); }
+        function animatePinDown() { $('center-pin').classList.remove('dragging'); }
+
+        function cancelPoiPicker() {
+            $('center-pin').style.display = 'none';
+            $('poi-picker-bar').classList.add('hidden');
+            $('poi-picker-bar').classList.remove('flex');
+            map.off('movestart', animatePinUp);
+            map.off('moveend', animatePinDown);
+            if (poiReturningToModal) {
+                poiReturningToModal = false;
+                $('poi-modal').style.display = 'flex';
+            }
+        }
+
+        function confirmPoiLocation() {
+            const center = map.getCenter();
+            pendingPoiLocation = { lat: center.lat, lng: center.lng };
+            poiReturningToModal = false;
+            $('center-pin').style.display = 'none';
+            $('poi-picker-bar').classList.add('hidden');
+            $('poi-picker-bar').classList.remove('flex');
+            map.off('movestart', animatePinUp);
+            map.off('moveend', animatePinDown);
+            $('poi-modal').style.display = 'flex';
+        }
+
+        function editPoiLocation() {
+            beginPoiMapSelection();
+        }
+
+        function closePoiModal() {
+            $('poi-modal').style.display = 'none';
+        }
+
+        
+        function submitPoiForm() {
+            const name = $('poi-name').value.trim();
+            const category = $('poi-category').value;
+            const address = $('poi-address')
+                ? $('poi-address').value.trim()
+                : '';
+
+            // Get working hours
+            const workingHours = $('poi-working-hours')
+                ? $('poi-working-hours').value
+                : '';
+
+            // Get business ownership checkbox
+            const isOwner = $('poi-is-owner')
+                ? $('poi-is-owner').checked
+                : false;
+
+            // Get selected photos
+            const placePhotos = selectedPlacePhotos.slice();
+
+            // Validate required fields and the selected map location.
+            if (!name || !category || !address) {
+                showToast(
+                    'نام، دسته‌بندی و آدرس مکان الزامی است.',
+                    'error'
+                );
+                return;
+            }
+            if (!pendingPoiLocation || !Number.isFinite(pendingPoiLocation.lat) || !Number.isFinite(pendingPoiLocation.lng)) {
+                showToast('موقعیت مکان روی نقشه مشخص نشده است.', 'error');
+                return;
+            }
+
+            // This page currently demonstrates the add-place flow; no place API is wired here yet.
+            console.log('Place name:', name);
+            console.log('Category:', category);
+            console.log('Address:', address);
+            console.log('Working hours:', workingHours);
+            console.log('Is owner:', isOwner);
+            console.log('Selected photos:', placePhotos);
+
+            // Close form
+            closePoiModal();
+
+            showToast(
+                'مکان به‌صورت آزمایشی روی نقشه نمایش داده شد؛ ثبت نهایی نیازمند اتصال API است.',
+                'success'
+            );
+
+            // Reset selected photos
+            selectedPlacePhotos = [];
+            renderPlacePhotoPreviews();
+
+            // Reset owner checkbox
+            const ownerCheckbox = $('poi-is-owner');
+            if (ownerCheckbox) ownerCheckbox.checked = false;
+
+            // Show temporary marker
+            L.marker(
+                [pendingPoiLocation.lat, pendingPoiLocation.lng],
+                {
+                    icon: pinIcon('#059669', 'fa-check')
+                }
+            )
+            .addTo(map)
+            .bindPopup(`
+                <div class="font-bold text-emerald-700">
+                    ${esc(name)}
+                </div>
+                <div class="text-[10px] text-gray-500">
+                    در حال بررسی...
+                </div>
+            `)
+            .openPopup();
+        }
+
+
+        // =====================================
+        // PLACE PHOTO UPLOAD
+        // =====================================
+
+        const MAX_PLACE_PHOTOS = 5;
+        const MAX_PLACE_PHOTO_BYTES = 8 * 1024 * 1024;
+
+        let selectedPlacePhotos = [];
+        let placePhotoObjectUrls = [];
+
+        function handlePlacePhotoSelection(fileList) {
+            const files = Array.from(fileList || []);
+
+            for (const file of files) {
+                if (file.type && !file.type.startsWith('image/')) {
+                    showToast('فقط فایل تصویری قابل انتخاب است.', 'error');
+                    continue;
+                }
+
+                if (file.size > MAX_PLACE_PHOTO_BYTES) {
+                    showToast('حجم هر عکس نباید بیشتر از ۸ مگابایت باشد.', 'error');
+                    continue;
+                }
+
+                const duplicate = selectedPlacePhotos.some(
+                    item => item.name === file.name &&
+                            item.size === file.size &&
+                            item.lastModified === file.lastModified
+                );
+                if (duplicate) continue;
+
+                if (selectedPlacePhotos.length >= MAX_PLACE_PHOTOS) {
+                    showToast('حداکثر می‌توانید ۵ عکس اضافه کنید.', 'error');
+                    break;
+                }
+
+                selectedPlacePhotos.push(file);
+            }
+
+            const input = $('poi-photo-input');
+            if (input) input.value = '';
+            renderPlacePhotoPreviews();
+        }
+
+        function renderPlacePhotoPreviews() {
+            const container = $('poi-photo-preview');
+
+            if (!container) return;
+
+            placePhotoObjectUrls.forEach(url => URL.revokeObjectURL(url));
+            placePhotoObjectUrls = [];
+
+            container.innerHTML = selectedPlacePhotos.map((file, index) => {
+
+                const url = URL.createObjectURL(file);
+                placePhotoObjectUrls.push(url);
+
+                return `
+                    <div class="poi-photo-thumb">
+                        <img src="${url}" alt="Place photo">
+
+                        <button type="button"
+                            class="poi-photo-remove"
+                            onclick="removePlacePhoto(${index})">
+                            <i class="fa-solid fa-xmark"></i>
+                        </button>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function removePlacePhoto(index) {
+            if (!Number.isInteger(index) || index < 0 || index >= selectedPlacePhotos.length) return;
+            selectedPlacePhotos.splice(index, 1);
+            renderPlacePhotoPreviews();
+        }
+
+        function resetPlacePhotos() {
+            selectedPlacePhotos = [];
+            const input = $('poi-photo-input');
+            if (input) input.value = '';
+            renderPlacePhotoPreviews();
+        }
+
+
+        // ---------- Working-hours editor ----------
+        const HOURS_WEEK_DAYS = [
+            { key: 'sat', label: 'شنبه' },
+            { key: 'sun', label: 'یکشنبه' },
+            { key: 'mon', label: 'دوشنبه' },
+            { key: 'tue', label: 'سه‌شنبه' },
+            { key: 'wed', label: 'چهارشنبه' },
+            { key: 'thu', label: 'پنج‌شنبه' },
+            { key: 'fri', label: 'جمعه' }
+        ];
+
+        function createDefaultHoursState() {
+            const days = {};
+            HOURS_WEEK_DAYS.forEach(day => {
+                days[day.key] = { isOpen: false, start: '08:30', end: '17:00' };
+            });
+            return { is24h: false, days };
+        }
+
+        let poiHoursState = createDefaultHoursState();
+        let hoursBefore24h = null;
+        let activeHoursDay = null;
+        let pendingDayStatus = 'closed';
+
+        function toPersianDigits(value) {
+            return String(value).replace(/[0-9]/g, digit => '۰۱۲۳۴۵۶۷۸۹'[Number(digit)]);
+        }
+
+        function formatHoursDay(day) {
+            if (poiHoursState.is24h) return 'شبانه‌روزی';
+            if (!day.isOpen) return 'تعطیل';
+            return `${toPersianDigits(day.start)} تا ${toPersianDigits(day.end)}`;
+        }
+
+        function getHoursSummary() {
+            if (poiHoursState.is24h) return 'تمام روزها، شبانه‌روزی';
+            const openDays = HOURS_WEEK_DAYS.filter(day => poiHoursState.days[day.key].isOpen);
+            if (!openDays.length) return 'برای تنظیم روزها انتخاب کنید';
+            const first = poiHoursState.days[HOURS_WEEK_DAYS[0].key];
+            const allSame = openDays.length === 7 && HOURS_WEEK_DAYS.every(day => {
+                const value = poiHoursState.days[day.key];
+                return value.isOpen && value.start === first.start && value.end === first.end;
+            });
+            if (allSame) return `هر روز، ${toPersianDigits(first.start)} تا ${toPersianDigits(first.end)}`;
+            return `${toPersianDigits(openDays.length)} روز در هفته تنظیم شده`;
+        }
+
+        function syncHoursField() {
+            const field = $('poi-working-hours');
+            if (field) field.value = JSON.stringify(poiHoursState);
+        }
+
+        function renderHoursPreview() {
+            const preview = $('poi-hours-preview');
+            if (preview) preview.textContent = getHoursSummary();
+            syncHoursField();
+        }
+
+        function renderHoursDays() {
+            const list = $('hours-days-list');
+            if (!list) return;
+            list.innerHTML = HOURS_WEEK_DAYS.map(day => {
+                const value = poiHoursState.days[day.key];
+                const isOpen = poiHoursState.is24h || value.isOpen;
+                return `
+                    <button type="button" class="hours-day-row" onclick="openDayHoursModal('${day.key}')">
+                        <span class="flex items-center gap-3">
+                            <i class="fa-solid fa-chevron-left hours-row-chevron"></i>
+                            <span>
+                                <span class="hours-day-value ${isOpen ? 'is-open' : ''} block">${formatHoursDay(value)}</span>
+                            </span>
+                        </span>
+                        <span class="hours-day-name">${day.label}</span>
+                    </button>`;
+            }).join('');
+            update24HoursCard();
+            renderHoursPreview();
+        }
+
+        function update24HoursCard() {
+            const card = $('hours-247-card');
+            const icon = $('hours-247-icon');
+            if (!card || !icon) return;
+            card.classList.toggle('active', poiHoursState.is24h);
+            icon.style.display = poiHoursState.is24h ? 'inline-block' : 'none';
+        }
+
+        function openHoursModal() {
+            renderHoursDays();
+            $('hours-modal').style.display = 'flex';
+        }
+
+        function closeHoursModal() {
+            $('hours-modal').style.display = 'none';
+        }
+
+        function saveHoursModal() {
+            renderHoursPreview();
+            closeHoursModal();
+        }
+
+        function toggle24Hours() {
+            if (!poiHoursState.is24h) {
+                hoursBefore24h = JSON.parse(JSON.stringify(poiHoursState.days));
+                poiHoursState.is24h = true;
+                HOURS_WEEK_DAYS.forEach(day => {
+                    poiHoursState.days[day.key] = { isOpen: true, start: '00:00', end: '23:59' };
+                });
+            } else {
+                poiHoursState.is24h = false;
+                if (hoursBefore24h) {
+                    poiHoursState.days = hoursBefore24h;
+                } else {
+                    HOURS_WEEK_DAYS.forEach(day => {
+                        poiHoursState.days[day.key] = { isOpen: false, start: '08:30', end: '17:00' };
+                    });
+                }
+                hoursBefore24h = null;
+            }
+            renderHoursDays();
+        }
+
+        function openDayHoursModal(dayKey) {
+            if (poiHoursState.is24h) {
+                showToast('برای ویرایش یک روز، ابتدا حالت شبانه‌روزی را غیرفعال کنید.', 'info');
+                return;
+            }
+            activeHoursDay = dayKey;
+            const day = poiHoursState.days[dayKey];
+            const label = HOURS_WEEK_DAYS.find(item => item.key === dayKey)?.label || '';
+            $('day-editor-title').textContent = `ساعت کاری ${label}`;
+            $('day-start-time').value = day.start || '08:30';
+            $('day-end-time').value = day.end || '17:00';
+            $('apply-all-days').checked = false;
+            setDayStatus(day.isOpen ? 'open' : 'closed');
+            $('hours-day-modal').style.display = 'flex';
+        }
+
+        function closeDayHoursModal() {
+            $('hours-day-modal').style.display = 'none';
+        }
+
+        function setDayStatus(status) {
+            pendingDayStatus = status;
+            $('day-status-open').classList.toggle('active', status === 'open');
+            $('day-status-closed').classList.toggle('active', status === 'closed');
+            $('day-time-wrap').style.display = status === 'open' ? 'block' : 'none';
+        }
+
+        function saveDayHours() {
+            if (!activeHoursDay) return;
+            const isOpen = pendingDayStatus === 'open';
+            const start = $('day-start-time').value;
+            const end = $('day-end-time').value;
+            if (isOpen) {
+                if (!start || !end) {
+                    showToast('لطفاً ساعت شروع و پایان را وارد کنید.', 'error');
+                    return;
+                }
+                if (start === end) {
+                    showToast('ساعت شروع و پایان نمی‌توانند یکسان باشند؛ برای فعالیت شبانه‌روزی گزینه مربوطه را فعال کنید.', 'error');
+                    return;
+                }
+            }
+            const updated = { isOpen, start: start || '08:30', end: end || '17:00' };
+            if ($('apply-all-days').checked) {
+                HOURS_WEEK_DAYS.forEach(day => { poiHoursState.days[day.key] = { ...updated }; });
+            } else {
+                poiHoursState.days[activeHoursDay] = updated;
+            }
+            closeDayHoursModal();
+            renderHoursDays();
+        }
+
+        // Keep modal interactions predictable when the user presses Escape.
+        document.addEventListener('keydown', event => {
+            if (event.key !== 'Escape') return;
+            if ($('hours-day-modal').style.display === 'flex') closeDayHoursModal();
+            else if ($('hours-modal').style.display === 'flex') closeHoursModal();
+        });
 
         // ---------- GPS ----------
         function getGPS() {
@@ -1593,7 +2493,6 @@
         }
 
         // ---------- PLANNED (SCHEDULED) REQUESTS ----------
-        // Stored in this browser (localStorage) per user, since the server has no endpoint for them.
         const DATE_LABELS = { today: 'امروز', tomorrow: 'فردا', day_after: 'پس‌فردا' };
         function plannedKey() { return currentUser ? `plannedRequests_${currentUser.id}` : null; }
         function getPlanned() {
@@ -1651,7 +2550,6 @@
             showToast('درخواست لغو شد.', 'info');
         }
 
-        // UPGRADED: Sending travel data including schedule information
         async function publishTraveler() {
             try {
                 const mode = travelScheduleMode;
@@ -1669,7 +2567,6 @@
             } catch (e) {}
         }
 
-        // UPGRADED: Fetching travelers matched by schedule
         async function loadTravelersOnMap(forceUI = true) {
             try {
                 const mode = travelScheduleMode;
@@ -1854,7 +2751,6 @@
                             currentSelectedTraveler = null;
                         }
                         
-                        // هدایت فرستنده به گروه دائمی یا موقت بر اساس دیتابیس
                         if (sData.perm_group_id) {
                             openPermGroupsPanel(sData.perm_group_id);
                         } else {
@@ -2013,7 +2909,6 @@
                 await loadAcceptedRequests();
                 
                 if (status === 'accepted') {
-                    // بررسی می‌کنیم که آیا گروه دائمی وجود دارد یا موقت
                     if (data.perm_group_id) {
                         openPermGroupsPanel(data.perm_group_id);
                     } else {
@@ -2691,6 +3586,7 @@
             const ds = $('signup-day'); if(ds) { for (let d = 1; d <= 31; d++) { const o = document.createElement('option'); o.value = d < 10 ? '0' + d : d; o.innerText = d; ds.appendChild(o); } }
             loadSaved(); renderSaved(); updateControls();
             renderHeaderAuth();
+            renderHoursPreview();
             getGPS().then(loc => map.setView([loc.lat, loc.lng], 14)).catch(() => {});
         });
     </script>

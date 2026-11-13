@@ -8,12 +8,15 @@ export function initializeLegacyApp() {
   const L = window.L;
   let sessionToken = localStorage.getItem('nimrahSessionToken') || '';
   function apiFetch(url, options = {}) {
-    const headers = new Headers(options.headers || {});
-    if (sessionToken) headers.set('Authorization', `Bearer ${sessionToken}`);
-    return fetch(url, { ...options, headers });
-  }
+        const headers = new Headers(options.headers || {});
+        if (sessionToken) headers.set('Authorization', `Bearer ${sessionToken}`);
+        
+        const safeUrl = url.replace(/^https?:\/\/[^\/]+/, '');
+        
+        return fetch(safeUrl, { ...options, headers });
+    }
         // ---------- API & Helpers ----------
-        const API_BASE = '/api';
+        const API_BASE = 'http://127.0.0.1:8000/api';
         const $ = id => document.getElementById(id);
         const fa = n => Number(n).toLocaleString('fa-IR');
         const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
