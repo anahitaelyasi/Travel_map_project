@@ -66,6 +66,7 @@ class RideRequest(Base):
     receiver_id = Column(Integer, ForeignKey('users.id'), nullable=False)
     status = Column(String(20), nullable=False, default='pending')
     perm_group_id = Column(Integer, nullable=True)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
 
 class Notification(Base):
     __tablename__ = 'notifications'
@@ -106,6 +107,28 @@ class PermanentMessage(Base):
     sender_avatar = Column(Text)
     text = Column(String(2000), nullable=False)
     timestamp = Column(DateTime, default=utcnow, nullable=False)
+
+class PermanentRecruitment(Base):
+    """A permanent group is discoverable only while this explicitly enabled trip is active."""
+    __tablename__ = 'permanent_recruitment'
+    group_id = Column(Integer, ForeignKey('perm_groups.id', ondelete='CASCADE'), primary_key=True)
+    origin_lat = Column(Float, nullable=False)
+    origin_lng = Column(Float, nullable=False)
+    dest_lat = Column(Float, nullable=False)
+    dest_lng = Column(Float, nullable=False)
+    origin_label = Column(String(300), nullable=False)
+    dest_label = Column(String(300), nullable=False)
+    travel_mode = Column(String(10), nullable=False)
+    travel_date = Column(String(10), nullable=False, default='')
+    travel_time = Column(String(5), nullable=False, default='')
+    expires_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+
+class PausedTravelerSearch(Base):
+    """Avoid silently restarting a converted group's old temporary search during polling."""
+    __tablename__ = 'paused_traveler_searches'
+    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), primary_key=True)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
 
 class PlannedRequest(Base):
     __tablename__ = 'planned_requests'
